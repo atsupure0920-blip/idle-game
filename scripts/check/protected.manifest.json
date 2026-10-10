@@ -14,9 +14,9 @@
     "scripts/lib/http.ts": "a9dc15fa131ef69f69a44367572a9705fa879b8acfd358927c698f8b479b9485",
     "scripts/vm/run.sh": "533c59336b7b763d55419714815b456ee904f48d617cf742cbc2d3021a2ea70f",
     "spec/ACCEPTANCE.yaml": "63581e6e1dbefb03821a0aec53603e24c9f59bb603c8fa0cfdf24d21db9b5ef2",
-    "spec/CORE_LOOP_CONTRACT.md": "2bc79b1ec34993e5e50e45479cac42de5f73b930f3bfb0df1ad071c12150a9ba",
+    "spec/CORE_LOOP_CONTRACT.md": "b9dfe15ce2e76f84cd1baed81b681224c0dd03c45adde9de745fef40343be9f0",
     "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
-    "tests/game.test.ts": "1e1c5443dbbf7f14d8ef2510c296cb9ad3a90ad70ce9405996f51dd9e0e7ce48",
+    "tests/game.test.ts": "3a0bf415e04605e58cc54fa3a9848dbecb63dcec6210ee337dcb3c6e19ae6a2e",
     "tsconfig.core.json": "0a0f18608c5eff846926e9083c47b7dbf8b53e7e262b39051853578678fe6e25",
     "tsconfig.json": "20729cadc6a64190bf6266460d4d9af5257dbd187bf8eb1560fddf80606b8acd"
   }

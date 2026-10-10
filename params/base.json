@@ -15,20 +15,19 @@
     "starBonus": 0.2,
     "levelCapBase": 40,
     "levelCapPerStar": 10,
-    "levelCostBase": 19,
+    "levelCostBase": 20,
     "levelCostGrowth": 1.09,
-    "shardsToPromote": [2, 3, 5, 8],
-    "joinAtPartyMinLevel": true
+    "shardsToPromote": [2, 3, 5, 8]
   },
   "enemy": {
     "baseHp": 100,
     "baseAtk": 14,
     "stageGrowth": 1.105,
-    "chapterHpMult": [1],
-    "chapterAtkMult": [0.575],
+    "chapterHpMult": [1.25],
+    "chapterAtkMult": [0.62],
     "count": 3,
     "intervalSec": 1.6,
-    "bossHpMult": 4.8,
+    "bossHpMult": 4.2,
     "bossAtkMult": 1.8,
     "bossIntervalSec": 2,
     "bossSkillPower": 0.9

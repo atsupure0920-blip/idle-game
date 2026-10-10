@@ -25,8 +25,6 @@ export interface Params {
     levelCostBase: number;
     levelCostGrowth: number;
     shardsToPromote: number[];
-    /** 新しく入った団員を、いまの編成でいちばん低いレベルに合わせるか。 */
-    joinAtPartyMinLevel: boolean;
   };
   enemy: {
     baseHp: number;
@@ -68,6 +66,13 @@ export interface Skill {
   power: number;
 }
 
+/**
+ * 戦闘での持ち味（なくてもよい）。
+ *   taunt    … 挑発。生きている間、相手はこの団員を先に狙う
+ *   backline … 後列ねらい。相手の後列を先に狙う
+ */
+export type Trait = "taunt" | "backline";
+
 export type MemberKind = "human" | "monster";
 export type MemberRole = "tank" | "attacker" | "healer" | "support";
 
@@ -82,6 +87,8 @@ export interface MemberDef {
   /** 攻撃の間隔（秒）。 */
   interval: number;
   skill: Skill;
+  /** 戦闘での持ち味（挑発、後列ねらい）。 */
+  trait?: Trait;
   /** 最初から持っている団員。 */
   starter?: boolean;
   /** 魔物の団員: この章のボスを初めて倒すと入団する。 */

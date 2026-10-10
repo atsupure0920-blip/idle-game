@@ -52,7 +52,6 @@ const P: Params = {
     levelCostBase: 10,
     levelCostGrowth: 1.5,
     shardsToPromote: [1, 2],
-    joinAtPartyMinLevel: true,
   },
   enemy: { baseHp: 40, baseAtk: 3, stageGrowth: 1.1, chapterHpMult: [], chapterAtkMult: [], count: 3, intervalSec: 1.6, bossHpMult: 3, bossAtkMult: 1.5, bossIntervalSec: 2, bossSkillPower: 0.9 },
   economy: { goldPerWinBase: 10, goldGrowth: 1.1, bossGoldMult: 3, offlineWinsPerMin: 2, idleCapHours: 8, ticketEveryStages: 2, monsterShardOffset: 1 },
@@ -125,6 +124,45 @@ test("戦闘: 前列が残っている間は、後列は狙われない", () => 
   const hitsBefore = r.events.slice(0, frontDown).filter((e) => e.side === 1 && e.kind === "attack");
   assert.ok(hitsBefore.length > 0);
   assert.ok(hitsBefore.every((e) => e.target === 0), "前列が倒れるまで、後列は攻撃されない");
+});
+
+test("戦闘: 狙う相手は運で選ばず、前列の中で残りの体力がいちばん少ない相手", () => {
+  const allies = [spec("a", 0, 100000, 40)];
+  const enemies = [spec("big", 0, 500, 1), spec("small", 0, 200, 1), spec("back", 1, 50, 1)];
+  const r = runBattle(allies, enemies, P.battle, createRng(5), true);
+  const hits = r.events.filter((e) => e.side === 0 && e.kind === "attack");
+  const smallDown = r.events.findIndex((e) => e.kind === "down" && e.side === 1 && e.actor === 1);
+  const bigDown = r.events.findIndex((e) => e.kind === "down" && e.side === 1 && e.actor === 0);
+  assert.equal(hits[0]?.target, 1, "体力の少ないほうから狙う");
+  assert.ok(smallDown > 0 && bigDown > smallDown, "少ないほうを倒しきってから、次へ移る");
+  assert.ok(r.events.slice(0, bigDown).every((e) => !(e.side === 0 && e.target === 2)), "前列が残っている間は、後列を狙わない");
+});
+
+test("戦闘: 「挑発」持ちがいると、相手はその団員を先に狙う（後列にいても）", () => {
+  const allies: FighterSpec[] = [spec("front", 0, 300, 1), { ...spec("taunter", 1, 300, 1), trait: "taunt" }];
+  const enemies = [spec("x", 0, 100000, 20)];
+  const r = runBattle(allies, enemies, P.battle, createRng(3), true);
+  const taunterDown = r.events.findIndex((e) => e.kind === "down" && e.side === 0 && e.actor === 1);
+  assert.ok(taunterDown > 0, "挑発持ちが先に倒れる");
+  const before = r.events.slice(0, taunterDown).filter((e) => e.side === 1 && e.kind === "attack");
+  assert.ok(before.length > 0 && before.every((e) => e.target === 1), "挑発持ちが倒れるまで、ほかは攻撃されない");
+  const after = r.events.slice(taunterDown).filter((e) => e.side === 1 && e.kind === "attack");
+  assert.ok(after.length > 0 && after.every((e) => e.target === 0), "倒れたあとは、ふつうに前列を狙う");
+});
+
+test("戦闘: 「後列ねらい」は、相手の後列を先に狙う。後列がいなくなれば前列を狙う", () => {
+  const allies: FighterSpec[] = [{ ...spec("sniper", 0, 100000, 30), trait: "backline" }];
+  const enemies = [spec("front", 0, 300, 1), spec("back", 1, 300, 1)];
+  const r = runBattle(allies, enemies, P.battle, createRng(2), true);
+  const backDown = r.events.findIndex((e) => e.kind === "down" && e.side === 1 && e.actor === 1);
+  assert.ok(backDown > 0);
+  assert.ok(r.events.slice(0, backDown).filter((e) => e.side === 0 && e.kind === "attack").every((e) => e.target === 1), "まず後列だけを狙う");
+  assert.equal(r.win, true, "後列を倒したあと、前列も倒しきる");
+
+  // 相手に挑発持ちがいれば、後列ねらいでもそちらを狙う
+  const taunting: FighterSpec[] = [{ ...spec("front", 0, 300, 1), trait: "taunt" }, spec("back", 1, 300, 1)];
+  const r2 = runBattle(allies, taunting, P.battle, createRng(2), true);
+  assert.equal(r2.events.find((e) => e.side === 0 && e.kind === "attack")?.target, 0);
 });
 
 test("戦闘: 技が使われる（単体、全体、回復、鼓舞）", () => {
@@ -306,7 +344,7 @@ test("団員: 提供割合の合計は1で、魔物は含まれない", () => {
   assert.ok(rates.every((r) => C.byId[r.id]?.kind === "human"));
 });
 
-test("団員: ボスを初めて倒すと、その魔物が入団する。レベルは編成でいちばん低い団員に合わせる", () => {
+test("団員: ボスを初めて倒すと、その魔物が入団する。新しい団員はレベル1から始まる", () => {
   const easy = easyContent();
   let g = createGame(T0, 1, easy);
   g = { ...g, members: { tank: { level: 4, star: 0, shards: 0 }, atk: { level: 3, star: 0, shards: 0 } } };
@@ -314,8 +352,9 @@ test("団員: ボスを初めて倒すと、その魔物が入団する。レベ
   const joins = r.events.filter((e) => e.type === "join");
   assert.equal(joins.length, 2, "章ごとに1体、合わせて2体");
   const first = joins[0];
-  assert.ok(first && first.type === "join" && first.id === "boss1" && first.level === 3);
+  assert.ok(first && first.type === "join" && first.id === "boss1" && first.level === 1);
   assert.ok(r.game.members["boss1"] && r.game.members["boss2"]);
+  assert.equal(r.game.members["boss1"]?.level, 1, "育てた団員がいても、新しい団員はレベル1");
   assert.ok(r.game.stats.firstJoinAtMs !== null);
   const shard = r.events.find((e) => e.type === "shard");
   assert.ok(shard && shard.type === "shard" && shard.id === "boss1", "面の節目で、入団した魔物のかけらが届く");
@@ -507,6 +546,7 @@ test("本番のデータ: 契約どおりの構成になっている", () => {
   for (let ch = 1; ch <= 4; ch++) {
     assert.equal(ctx.members.filter((m) => m.joinChapter === ch).length, 1, `第${ch}章のボスが1体いる`);
   }
+  assert.ok(ctx.members.some((m) => m.trait === "taunt") && ctx.members.some((m) => m.trait === "backline"), "挑発と後列ねらいの団員がいる");
   const g = createGame(T0, 1, ctx);
   assert.deepEqual(
     g.party.map((id) => (id === null ? null : ctx.byId[id]?.role)),

@@ -4,7 +4,7 @@
 // 画面は、返ってきた出来事（events）を時間どおりに再生するだけ。模擬プレイは結果だけを使う。
 
 import type { Rng } from "./rng.ts";
-import type { Params, Skill } from "./params.ts";
+import type { Params, Skill, Trait } from "./params.ts";
 
 export interface FighterSpec {
   /** 団員のID、または敵の種類。表示用。 */
@@ -16,6 +16,8 @@ export interface FighterSpec {
   /** 攻撃の間隔（秒）。 */
   interval: number;
   skill: Skill | null;
+  /** 持ち味（挑発、後列ねらい）。なければ省略。 */
+  trait?: Trait | null;
 }
 
 export type BattleEventKind = "attack" | "strike" | "aoe" | "heal" | "healall" | "selfheal" | "rally" | "down";
@@ -54,6 +56,7 @@ interface Fighter {
   atk: number;
   interval: number;
   skill: Skill | null;
+  trait: Trait | null;
   gauge: number;
   nextAt: number;
   rallyUntil: number;
@@ -76,6 +79,7 @@ export function runBattle(
     atk: spec.atk,
     interval: spec.interval,
     skill: spec.skill,
+    trait: spec.trait ?? null,
     gauge: 0,
     // 味方が少し先に動く。同じ側の中では、番号の順に少しずつずらす。
     nextAt: spec.interval * (side === 0 ? 0.5 : 0.9) + index * 0.07,
@@ -107,11 +111,18 @@ export function runBattle(
     target.hp += amount;
     push({ t, side: actor.side, actor: actor.index, kind, targetSide: target.side, target: target.index, amount });
   };
-  // 狙う相手: 前列が残っていれば前列の中から、残りの体力がいちばん少ない相手（同じなら番号の若いほう）。
-  // 相手を運で選ばないので、勝ち負けが編成の強さでほぼ決まり、「勝てる見込み」が当てになる。
-  const pickTarget = (foes: Fighter[]): Fighter => {
-    const front = foes.filter((f) => f.row === 0);
-    const pool = front.length > 0 ? front : foes;
+  // 狙う相手の決め方（運では選ばない）:
+  //   1. 相手に「挑発」持ちが残っていれば、その中から
+  //   2. 自分が「後列ねらい」なら、相手の後列から（後列がいなければ前列）
+  //   3. それ以外は、相手の前列から（前列がいなければ後列）
+  //   候補の中では、残りの体力がいちばん少ない相手（同じなら番号の若いほう）。
+  const pickTarget = (actor: Fighter, foes: Fighter[]): Fighter => {
+    let pool = foes.filter((f) => f.trait === "taunt");
+    if (pool.length === 0) {
+      const wanted = actor.trait === "backline" ? 1 : 0;
+      pool = foes.filter((f) => f.row === wanted);
+    }
+    if (pool.length === 0) pool = foes;
     let target = pool[0] as Fighter;
     for (const f of pool) if (f.hp < target.hp) target = f;
     return target;
@@ -140,7 +151,7 @@ export function runBattle(
       cur.gauge = 0;
       const s = cur.skill;
       if (s.type === "strike") {
-        hit(cur, pickTarget(foes), cur.atk * s.power, "strike", t);
+        hit(cur, pickTarget(cur, foes), cur.atk * s.power, "strike", t);
       } else if (s.type === "aoe") {
         for (const f of foes) hit(cur, f, cur.atk * s.power, "aoe", t);
       } else if (s.type === "heal") {
@@ -160,7 +171,7 @@ export function runBattle(
       }
     } else {
       cur.gauge += bp.gaugePerAttack;
-      hit(cur, pickTarget(foes), cur.atk, "attack", t);
+      hit(cur, pickTarget(cur, foes), cur.atk, "attack", t);
     }
     cur.nextAt = t + cur.interval;
 

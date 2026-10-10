@@ -210,7 +210,7 @@ export function allySpecs(g: GameData, ctx: Content): FighterSpec[] {
     const own = g.members[id];
     if (!def || !own) return;
     const s = memberStats(def, own.level, own.star, ctx.params);
-    specs.push({ key: id, row: slot < PARTY_SIZE / 2 ? 0 : 1, hp: s.hp, atk: s.atk, interval: def.interval, skill: def.skill });
+    specs.push({ key: id, row: slot < PARTY_SIZE / 2 ? 0 : 1, hp: s.hp, atk: s.atk, interval: def.interval, skill: def.skill, trait: def.trait ?? null });
   });
   return specs;
 }
@@ -288,15 +288,8 @@ export function promoteInfo(g: GameData, id: string, ctx: Content): PromoteInfo 
 
 // ---------------------------------------------------------------- 進行
 
-function joinLevel(g: GameData, ctx: Content): number {
-  if (!ctx.params.member.joinAtPartyMinLevel) return 1;
-  let min = 0;
-  for (const id of g.party) {
-    const own = id === null ? undefined : g.members[id];
-    if (own && (min === 0 || own.level < min)) min = own.level;
-  }
-  return Math.max(1, min);
-}
+/** 新しく入った団員のレベル。育成はレベル1から始める。 */
+const JOIN_LEVEL = 1;
 
 function startBattle(g: GameData, atMs: number, ctx: Content, record: boolean, events: GameEvent[]): void {
   const stage = currentStage(g, ctx);
@@ -352,7 +345,7 @@ function resolveBattle(g: GameData, ctx: Content, events: GameEvent[]): boolean 
   if (isBossStage(b.stage, p)) {
     const def = ctx.members.find((m) => m.joinChapter === chapterOf(b.stage, p));
     if (def && !g.members[def.id]) {
-      const level = joinLevel(g, ctx);
+      const level = JOIN_LEVEL;
       g.members[def.id] = { level, star: 0, shards: 0 };
       if (g.stats.firstJoinAtMs === null) g.stats.firstJoinAtMs = atMs;
       events.push({ type: "join", atMs, id: def.id, level });
@@ -484,7 +477,7 @@ export function recruit(game: GameData, ctx: Content): RecruitResult {
     own.shards += 1;
     return { game: g, ok: true, id: picked.id, duplicate: true };
   }
-  g.members[picked.id] = { level: joinLevel(g, ctx), star: 0, shards: 0 };
+  g.members[picked.id] = { level: JOIN_LEVEL, star: 0, shards: 0 };
   return { game: g, ok: true, id: picked.id, duplicate: false };
 }
 

@@ -68,10 +68,20 @@ function maxHp(g: GameData, id: string, ctx: Content): number {
   return def && own ? memberStats(def, own.level, own.star, ctx.params).hp : 0;
 }
 
-function power(g: GameData, id: string, ctx: Content): number {
+/**
+ * 「同じレベルまで育てたら」の強さ。新しい団員はレベル1で入るので、いまの強さで比べると必ず負ける。
+ * 入れ替えを考える人は、育てた先の強さで比べる（入れたあと、レベルの低い団員から育てて追いつかせる）。
+ */
+function potential(g: GameData, id: string, ctx: Content): number {
   const def = ctx.byId[id];
   const own = g.members[id];
-  return def && own ? memberPower(def, own.level, own.star, ctx.params) : 0;
+  if (!def || !own) return 0;
+  let top = own.level;
+  for (const other of g.party) {
+    const o = other === null ? undefined : g.members[other];
+    if (o && o.level > top) top = o.level;
+  }
+  return memberPower(def, top, own.star, ctx.params);
 }
 
 /** 画面を1回見たときの行動。 */
@@ -91,11 +101,11 @@ export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy,
     g = r.game;
   }
 
-  // 3. 編成: 空き枠を埋める。入れ替えをする人は、控えのほうが強ければ交代させる
+  // 3. 編成: 空き枠を埋める。入れ替えをする人は、控えのほうが（育てれば）強いなら交代させる
   for (let guard = 0; guard < 8; guard++) {
     const bench = Object.keys(g.members)
       .filter((id) => !g.party.includes(id))
-      .sort((a, b) => power(g, b, ctx) - power(g, a, ctx));
+      .sort((a, b) => potential(g, b, ctx) - potential(g, a, ctx));
     const best = bench[0];
     if (!best) break;
     const empty = g.party.indexOf(null);
@@ -106,9 +116,9 @@ export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy,
     if (!policy.swaps) break;
     let weakSlot = 0;
     for (let i = 1; i < g.party.length; i++) {
-      if (power(g, g.party[i] as string, ctx) < power(g, g.party[weakSlot] as string, ctx)) weakSlot = i;
+      if (potential(g, g.party[i] as string, ctx) < potential(g, g.party[weakSlot] as string, ctx)) weakSlot = i;
     }
-    if (power(g, best, ctx) <= power(g, g.party[weakSlot] as string, ctx) * 1.05) break;
+    if (potential(g, best, ctx) <= potential(g, g.party[weakSlot] as string, ctx) * 1.05) break;
     g = setPartySlot(g, weakSlot, best).game;
   }
 
