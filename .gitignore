@@ -1,6 +1,6 @@
 node_modules
-dist/
-reports/
+/dist/
+/reports/
 art/inbox/
 .secrets/
 *.log
