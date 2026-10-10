@@ -4,7 +4,11 @@
 //   - 画面（DOM）にも、実際の時計にも依存しない。時刻は必ず引数 nowMs で受け取る。
 //   - 状態は書き換えず、新しい状態を返す。
 //
-// いまの中身は S0（導通確認）用の最小限。S2 でゲームのルールに置き換える。
+// ここにあるのは、セーブ全体の入れ物（起動やタップの記録）。
+// ゲーム本体の状態は game に入り、独自の版番号（GAME_VERSION）を持つ（src/core/game.ts）。
+// S0 のころのセーブには game がない。その場合は、画面側が新しいゲームを作って入れる。
+
+import type { GameData } from "./game.ts";
 
 export const STATE_VERSION = 1;
 
@@ -20,6 +24,8 @@ export interface GameState {
   taps: number;
   /** 乱数の内部状態。 */
   rngState: number;
+  /** ゲーム本体の状態。S0 のころのセーブにはない。 */
+  game?: GameData;
 }
 
 export function createInitialState(nowMs: number, seed: number): GameState {

@@ -13,6 +13,7 @@
     "build": "node scripts/build.ts",
     "check": "node scripts/check/all.ts",
     "selftest": "node scripts/check/selftest.ts",
+    "acceptance": "node scripts/check/acceptance.ts",
     "exit": "node scripts/check/exit.ts",
     "status": "node scripts/status.ts",
     "rollback": "node scripts/rollback.ts",

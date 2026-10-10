@@ -2,7 +2,7 @@
 //
 //   node scripts/play.ts
 //
-// 流れ: 未記録の変更がないか → 全検査 → 番号を付ける（build-N）→ ビルド → 公開
+// 流れ: 未記録の変更がないか → 全検査 → 合否の数字（模擬プレイ）→ 番号を付ける（build-N）→ ビルド → 公開
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -26,6 +26,17 @@ process.stdout.write(check.out);
 if (check.code !== 0) {
   process.stderr.write(check.err);
   fail("検査に落ちたので、ビルドは出しません。");
+}
+
+// 合否の数字（数値と模擬プレイがそろってから。S2 以降）
+if (existsSync("params/base.json") && existsSync("scripts/check/acceptance.ts")) {
+  console.log("模擬プレイで、合否の数字を検査します…");
+  const acc = runNode(["scripts/check/acceptance.ts"]);
+  process.stdout.write(acc.out);
+  if (acc.code !== 0) {
+    process.stderr.write(acc.err);
+    fail("合否の数字に合格していないので、ビルドは出しません。");
+  }
 }
 
 // 番号を付ける（いまの状態にすでに番号があれば、それを使う）

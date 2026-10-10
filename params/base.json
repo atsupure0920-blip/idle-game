@@ -1,0 +1,53 @@
+{
+  "battle": {
+    "timeLimitSec": 60,
+    "gaugeMax": 100,
+    "gaugePerAttack": 34,
+    "damageVariance": 0.1,
+    "interBattleSec": 3,
+    "stageIntroSec": 5,
+    "rallySec": 8
+  },
+  "member": {
+    "baseHp": 120,
+    "baseAtk": 12,
+    "levelGrowth": 0.08,
+    "starBonus": 0.2,
+    "levelCapBase": 40,
+    "levelCapPerStar": 10,
+    "levelCostBase": 19,
+    "levelCostGrowth": 1.09,
+    "shardsToPromote": [2, 3, 5, 8],
+    "joinAtPartyMinLevel": true
+  },
+  "enemy": {
+    "baseHp": 100,
+    "baseAtk": 14,
+    "stageGrowth": 1.105,
+    "chapterHpMult": [1],
+    "chapterAtkMult": [0.575],
+    "count": 3,
+    "intervalSec": 1.6,
+    "bossHpMult": 4.8,
+    "bossAtkMult": 1.8,
+    "bossIntervalSec": 2,
+    "bossSkillPower": 0.9
+  },
+  "economy": {
+    "goldPerWinBase": 10,
+    "goldGrowth": 1.115,
+    "bossGoldMult": 3,
+    "offlineWinsPerMin": 1.5,
+    "idleCapHours": 8,
+    "ticketEveryStages": 3,
+    "monsterShardOffset": 5
+  },
+  "progress": {
+    "chapters": 4,
+    "stagesPerChapter": 10,
+    "onlineGapSec": 30
+  },
+  "recruit": {
+    "firstId": "h_costume"
+  }
+}

@@ -141,6 +141,17 @@ if (stage === "S0") {
     if (contract.includes("（未作成）")) next.push("Claudeが spec/CORE_LOOP_CONTRACT.md と spec/ACCEPTANCE.yaml を書く");
     else waiting.push("契約書（spec/CORE_LOOP_CONTRACT.md）を読み、補完された決定に承認か却下を付ける");
   }
+} else if (stage === "S2") {
+  const pending = (read("pipeline/DECISIONS.md") ?? "").split("\n").filter((l) => l.trim().startsWith("|") && l.includes("□")).length;
+  if (pending > 0) waiting.push(`契約書にないルールの提案 ${pending}件に、○（採用）か ✕（不採用）を返す（pipeline/DECISIONS.md）`);
+  const acc = read("reports/acceptance.json");
+  let accOk = false;
+  try {
+    accOk = acc !== null && (JSON.parse(acc) as { ok?: boolean }).ok === true;
+  } catch {
+    accOk = false;
+  }
+  next.push(accOk ? "模擬プレイは合否の数字に合格。出口の検査（exit）が通れば「next」で S3 へ" : "模擬プレイが合否の数字に合格するまで、数値（params/）を調整する");
 } else if (stage !== null) {
   next.push(`${stage} の表示は、この段階に入るときに追加します`);
 }

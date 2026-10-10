@@ -6,6 +6,7 @@
 
 import { STATE_VERSION } from "./state.ts";
 import type { GameState } from "./state.ts";
+import { GAME_VERSION, isGameData } from "./game.ts";
 
 export const SAVE_FORMAT = "idle-game-save";
 
@@ -70,6 +71,14 @@ export function deserialize(
     const step = migrations[v];
     if (!step) return { kind: "corrupt", reason: `版${v}から版${v + 1}への変換がありません` };
     state = { ...step(state as Record<string, unknown>), version: v + 1 };
+  }
+
+  // ゲーム本体（game）は独自の版番号を持つ。新しすぎる版は、上書きを避けるために読み込まない。
+  const game = (state as Record<string, unknown>)["game"];
+  if (game !== undefined) {
+    const gv = isRecord(game) ? game["v"] : undefined;
+    if (typeof gv === "number" && gv > GAME_VERSION) return { kind: "too_new", version: gv };
+    if (!isGameData(game)) return { kind: "corrupt", reason: "ゲームの状態の形が正しくありません" };
   }
 
   if (!isGameState(state, currentVersion)) {
