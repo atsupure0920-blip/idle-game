@@ -1,0 +1,107 @@
+:root {
+  --bg: #f4f1ea;
+  --card: #ffffff;
+  --ink: #23201b;
+  --sub: #6b655b;
+  --line: #e2ddd2;
+  --accent: #c2410c;
+  --danger: #b91c1c;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+h1 { font-size: 22px; margin: 0; }
+h2 { font-size: 16px; margin: 0 0 6px; }
+.sub { margin: 4px 0 0; color: var(--sub); font-size: 14px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.card p, .card ol { margin: 0; font-size: 14px; }
+.card ol { padding-left: 20px; }
+dl { margin: 0; }
+dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+dl > div:last-child { border-bottom: 0; }
+dt { color: var(--sub); font-size: 14px; }
+dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.tap {
+  appearance: none;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  padding: 22px;
+  width: 100%;
+  cursor: pointer;
+  transition: transform 80ms ease;
+}
+.tap:active { transform: scale(0.97); }
+.notice {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  font-size: 14px;
+}
+.guide { border-color: var(--accent); }
+
+/* デバッグ用の表示（公開用ビルドには入らない） */
+.dbg-band {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 1000;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+  background: var(--danger); color: #fff; font-size: 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.dbg-band button, .dbg-fab, .dbg-sheet button {
+  appearance: none; border: 0; border-radius: 8px; padding: 8px 12px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.dbg-band button { background: #fff; color: var(--danger); }
+.dbg-fab {
+  position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 999;
+  background: #23201b; color: #fff; opacity: 0.75;
+}
+.dbg-sheet {
+  position: fixed; inset: 0; z-index: 1001; background: rgba(0,0,0,0.5);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.dbg-sheet > div {
+  background: #fff; width: 100%; max-width: 480px; max-height: 80%;
+  border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dbg-sheet textarea {
+  width: 100%; height: 40vh; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+}
+.dbg-sheet .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dbg-sheet button { background: #23201b; color: #fff; }
+.dbg-sheet button.ghost { background: #e7e2d6; color: var(--ink); }

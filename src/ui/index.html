@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="放置ゲーム">
+  <meta name="theme-color" content="#f4f1ea">
+  <title>放置ゲーム（導通確認）</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="icon" type="image/png" href="icon-180.png">
+  <link rel="stylesheet" href="style.css?v=%BUILD_ID%">
+</head>
+<body>
+  <main id="app">
+    <header>
+      <h1>導通確認</h1>
+      <p class="sub">この画面が出ていれば、公開から表示までがつながっています。</p>
+    </header>
+
+    <section class="card" aria-label="状態">
+      <dl>
+        <div><dt>ビルド</dt><dd data-testid="build-id">-</dd></div>
+        <div><dt>起動した回数</dt><dd data-testid="opens">-</dd></div>
+        <div><dt>タップした回数</dt><dd data-testid="taps">-</dd></div>
+        <div><dt>前回から</dt><dd data-testid="away">-</dd></div>
+        <div><dt>開き方</dt><dd data-testid="launch-mode">-</dd></div>
+        <div><dt>保存</dt><dd data-testid="save-status">-</dd></div>
+      </dl>
+    </section>
+
+    <button type="button" class="tap" data-testid="tap-button">タップ</button>
+
+    <p class="notice" data-testid="notice" hidden></p>
+
+    <section class="card guide" data-testid="a2hs-guide" hidden>
+      <h2>ホーム画面に追加してください</h2>
+      <p>Safariの共有ボタン（四角から矢印が出ているボタン）を押し、「ホーム画面に追加」を選びます。追加したアイコンから開くと、セーブが消えにくくなります。</p>
+    </section>
+
+    <section class="card">
+      <h2>確かめること</h2>
+      <ol>
+        <li>「タップ」を何回か押す。</li>
+        <li>画面を閉じて、もう一度開く。</li>
+        <li>タップした回数が残っていて、起動した回数が1つ増えていれば合格。</li>
+      </ol>
+    </section>
+  </main>
+  <script src="app.js?v=%BUILD_ID%"></script>
+</body>
+</html>

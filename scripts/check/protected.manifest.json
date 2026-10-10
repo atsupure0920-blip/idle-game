@@ -1,0 +1,18 @@
+{
+  "note": "保護ファイルの指紋。手で編集しない。更新は scripts/check/protected.ts の add / approve で行う。",
+  "files": {
+    "scripts/check/all.ts": "db69dd7ab03076f55bba73b0aa8508b19451a3dd47565049c68704b12a264042",
+    "scripts/check/core-purity.ts": "3982379312a3d12c08bedd4a118088d3edf65ddb1593a1de87827a0666e8e30b",
+    "scripts/check/exit.ts": "942b08756796ebccfad63cf855b660b687c8dbc21c3e2e6c82d8374400581272",
+    "scripts/check/exit/S0.ts": "03261a49593bf6a9a960d73007a46d074c211a52edc680b9d21d63a5026a65e8",
+    "scripts/check/protected.ts": "09a6ca76196169057cf506d4d112115e60b57010614d431e7238edc963ffe91b",
+    "scripts/check/selftest.ts": "3465cdfbfaa920ae8d18656d7071c27206c91a0d2be05325055aa7a9759b0a05",
+    "scripts/lib/env.ts": "b814b60d6060d4f366a2f2cb2d94c2e0672865a8c807e51176f2021b0a71504e",
+    "scripts/vm/run.sh": "533c59336b7b763d55419714815b456ee904f48d617cf742cbc2d3021a2ea70f",
+    "spec/ACCEPTANCE.yaml": "72151b7eac297b700bcf48e8931bbed550a5427d4a35759afc2964c456aa5cca",
+    "spec/CORE_LOOP_CONTRACT.md": "cfdfdff9542d7977a3b0ac106d87065559becf3172df2ef23bab1b4426c999d9",
+    "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
+    "tsconfig.core.json": "0a0f18608c5eff846926e9083c47b7dbf8b53e7e262b39051853578678fe6e25",
+    "tsconfig.json": "20729cadc6a64190bf6266460d4d9af5257dbd187bf8eb1560fddf80606b8acd"
+  }
+}
