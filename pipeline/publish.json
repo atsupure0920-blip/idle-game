@@ -1,4 +1,5 @@
 {
-  "provider": null,
-  "url": null
+  "provider": "github-pages",
+  "repo": "atsupure0920-blip/idle-game",
+  "url": "https://atsupure0920-blip.github.io/idle-game/"
 }

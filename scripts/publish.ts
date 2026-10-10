@@ -15,6 +15,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import os from "node:os";
 import path from "node:path";
 import { ROOT, SRC_ROOT, run } from "./lib/env.ts";
+import { httpGet } from "./lib/http.ts";
 import type { RunResult } from "./lib/env.ts";
 
 const dryRun = process.argv.includes("--dry-run");
@@ -139,19 +140,24 @@ process.on("exit", () => rmSync(stage, { recursive: true, force: true }));
   // 3. 載ったことを確かめる
   let verified = false;
   let detail = "";
-  try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/contents/build.json?ref=gh-pages`, {
-      headers: { Accept: "application/vnd.github.raw+json", Authorization: `Bearer ${token}`, "User-Agent": "idle-game-publish" },
-    });
-    if (res.ok) {
-      const info = (await res.json()) as { buildId?: string };
-      verified = info.buildId === buildId;
-      if (!verified) detail = `載っているのは ${info.buildId ?? "不明"} でした`;
-    } else {
-      detail = `確認の応答が ${res.status} でした`;
+  const res = httpGet(`https://api.github.com/repos/${repo}/contents/build.json?ref=gh-pages`, {
+    Accept: "application/vnd.github.raw+json",
+    Authorization: `Bearer ${token}`,
+    "User-Agent": "idle-game-publish",
+  });
+  if (!res.reached) {
+    detail = `GitHub に届きませんでした（${scrub(res.error)}）`;
+  } else if (res.status !== 200) {
+    detail = `確認の応答が ${res.status} でした`;
+  } else {
+    let published = "";
+    try {
+      published = (JSON.parse(res.body) as { buildId?: string }).buildId ?? "";
+    } catch {
+      // 読めなければ空のまま
     }
-  } catch (e) {
-    detail = `確認できませんでした（${scrub(String(e))}）`;
+    verified = published === buildId;
+    if (!verified) detail = `載っているのは ${published || "不明"} でした`;
   }
   if (!verified) fail(`公開用の枝の確認に失敗しました: ${detail}`);
   console.log(`確認: 公開用の枝に ${buildId} が載っています。`);

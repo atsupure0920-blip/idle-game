@@ -1,12 +1,49 @@
 // S0（準備と導通）の出口。
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { SRC_ROOT, buildTags, dirtyFiles, gitOk, runNode } from "../../lib/env.ts";
+import { httpGet } from "../../lib/http.ts";
 import type { ExitReport, ExitItem } from "../exit.ts";
 
 function lastLines(text: string, n: number): string {
   return text.trim().split("\n").slice(-n).join("\n");
+}
+
+function buildIdOf(body: string): string {
+  try {
+    return (JSON.parse(body) as { buildId?: string }).buildId ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** 公開されているビルドが最新かを確かめる。 */
+function checkPublished(url: string, repo: string, latest: string): ExitItem {
+  // 1. 公開URLそのものに問い合わせる
+  const direct = httpGet(`${url.replace(/\/$/, "")}/build.json?t=${Date.now()}`);
+  if (direct.reached) {
+    const name = "公開URLが最新のビルドを返す";
+    if (direct.status !== 200) return { name, ok: false, detail: `応答が ${direct.status} でした: ${url}` };
+    const id = buildIdOf(direct.body);
+    return id === latest ? { name, ok: true } : { name, ok: false, detail: `公開されているのは ${id || "不明"}、最新は ${latest} です` };
+  }
+
+  // 2. 作業環境から公開URLに届かない場合は、GitHub 上の公開用の置き場（gh-pages）を確かめる。
+  //    「実際のURLで表示されること」は、ここでは確かめられない（ユーザーの iPhone と Claude 側の別経路で確かめる）。
+  const name = "公開用の置き場に最新のビルドが載っている（公開URLには作業環境から届かない）";
+  if (repo === "") return { name, ok: false, detail: `公開URLに届かず、リポジトリの指定もありません（${direct.error}）` };
+  const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json", "User-Agent": "idle-game-check" };
+  const tokenFile = path.join(SRC_ROOT, ".secrets/github-token.txt");
+  if (existsSync(tokenFile)) {
+    const token = readFileSync(tokenFile, "utf8").replace(/^﻿/, "").trim();
+    if (token !== "" && !/\s/.test(token)) headers["Authorization"] = `Bearer ${token}`;
+  }
+  const api = httpGet(`https://api.github.com/repos/${repo}/contents/build.json?ref=gh-pages`, headers);
+  if (!api.reached) return { name, ok: false, detail: `GitHub に届きませんでした（${api.error}）` };
+  if (api.status !== 200) return { name, ok: false, detail: `公開用の置き場を読めませんでした（応答 ${api.status}）` };
+  const id = buildIdOf(api.body);
+  return id === latest ? { name, ok: true } : { name, ok: false, detail: `載っているのは ${id || "不明"}、最新は ${latest} です` };
 }
 
 export async function check(): Promise<ExitReport> {
@@ -32,9 +69,11 @@ export async function check(): Promise<ExitReport> {
   });
 
   let url = "";
+  let repo = "";
   try {
-    const cfg = JSON.parse(readFileSync(path.join(SRC_ROOT, "pipeline/publish.json"), "utf8")) as { url?: string | null };
+    const cfg = JSON.parse(readFileSync(path.join(SRC_ROOT, "pipeline/publish.json"), "utf8")) as { url?: string | null; repo?: string | null };
     url = (cfg.url ?? "").trim();
+    repo = (cfg.repo ?? "").trim();
   } catch {
     // 未設定として扱う
   }
@@ -42,20 +81,7 @@ export async function check(): Promise<ExitReport> {
     items.push({ name: "公開URLが最新のビルドを返す", ok: false, detail: "公開先がまだ決まっていません（pipeline/publish.json）" });
   } else {
     const latest = tags.length > 0 ? `build-${tags[tags.length - 1]}` : "";
-    let detail: string | undefined;
-    let ok = false;
-    try {
-      const res = await fetch(`${url.replace(/\/$/, "")}/build.json?t=${Date.now()}`, { cache: "no-store" });
-      if (!res.ok) detail = `応答が ${res.status} でした: ${url}`;
-      else {
-        const info = (await res.json()) as { buildId?: string };
-        ok = info.buildId === latest;
-        if (!ok) detail = `公開されているのは ${info.buildId ?? "不明"}、最新は ${latest} です`;
-      }
-    } catch (e) {
-      detail = `つながりませんでした: ${url}（${String(e)}）`;
-    }
-    items.push({ name: "公開URLが最新のビルドを返す", ok, detail });
+    items.push(checkPublished(url, repo, latest));
   }
 
   return {

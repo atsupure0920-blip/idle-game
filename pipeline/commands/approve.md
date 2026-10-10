@@ -7,9 +7,9 @@
    - なぜ変える必要があるか
    - 変えると、何が検査されなくなるか・緩くなるか
 2. 承認を得る。承認がなければ変えない。
-3. 変更したら `bash scripts/vm/run.sh protect approve --reason "理由"` で登録する。
+3. 変更したら `bash scripts/vm/run.sh protect -- approve --reason "理由"` で登録する。
    記録は `pipeline/APPROVALS.md` に残る。
-4. 新しいファイルを足すだけなら、承認は要らない。`bash scripts/vm/run.sh protect add` で登録する。
+4. 新しいファイルを足すだけなら、承認は要らない。`bash scripts/vm/run.sh protect -- add` で登録する。
 
 承認を求めてはいけない変更: 落ちているテストを通すために、テストの期待値や合否の数字を緩めること。
 直すのは実装のほう。期待値のほうが間違っているなら、その根拠（ユーザーの実プレイの記録など）を示す。

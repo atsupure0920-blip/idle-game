@@ -21,8 +21,8 @@
   実行していない検査を、通ったことにしない。
 - **保護ファイルを黙って変えない。** `tests/`、`scripts/check/`、`scripts/lib/`、`scripts/vm/`、
   `spec/ACCEPTANCE.yaml`、`spec/CORE_LOOP_CONTRACT.md`、`tsconfig*.json`。
-  変更・削除は、理由を日本語でユーザーに示し、承認を得てから `protect approve --reason` で登録する。
-  追加だけなら `protect add` でよい。テストを通すためにテストを緩めない。
+  変更・削除は、理由を日本語でユーザーに示し、承認を得てから `protect -- approve --reason "理由"` で登録する。
+  追加だけなら `protect -- add` でよい。テストを通すためにテストを緩めない。
 - **core は純粋に保つ。** `src/core` と `src/sim` は、画面にも実際の時計・乱数にも触れない
   （`pipeline/rules/core.md`）。
 - **同じ不具合の修正が3回続けて失敗したら、直し続けない。** 最後に動いたビルドへ `rollback` し、別の方法を取る。
@@ -44,7 +44,7 @@ bash scripts/vm/run.sh play        # 検査 → 番号付け → ビルド → �
 bash scripts/vm/run.sh rollback 3  # build-3 の状態へ戻す
 bash scripts/vm/run.sh deploy -- --dry-run  # 公開の準備と安全確認だけ（送らない）
 bash scripts/vm/run.sh exit        # いまの段階の出口の検査
-bash scripts/vm/run.sh protect verify
+bash scripts/vm/run.sh protect -- verify    # 引数を渡すときは「--」を挟む
 ```
 
 git の操作（記録、番号付け）は、このフォルダに対して直接行う。記録の前に、接続フォルダでの削除の許可が要る

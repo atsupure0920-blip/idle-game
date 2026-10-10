@@ -8,5 +8,5 @@
    ゲートのある段階（S1, S3, S4, S5, S6, S7）では、「進める・削る・やめる」を聞く。
 4. `pipeline/verifier.md` の手順で、独立した検証を行う。
 5. すべてそろったら、段階の完了を記録する: `git tag <段階>-done`（例: `git tag S0-done`）。
-6. 次の段階の出口の検査（`scripts/check/exit/<段階>.ts`）がなければ作り、`protect add` で登録する。
+6. 次の段階の出口の検査（`scripts/check/exit/<段階>.ts`）がなければ作り、`protect -- add` で登録する。
 7. `status` を実行して、次の段階の「あなた待ち」を伝える。
