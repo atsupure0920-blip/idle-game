@@ -16,7 +16,8 @@
     "exit": "node scripts/check/exit.ts",
     "status": "node scripts/status.ts",
     "rollback": "node scripts/rollback.ts",
-    "play": "node scripts/play.ts"
+    "play": "node scripts/play.ts",
+    "deploy": "node scripts/publish.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

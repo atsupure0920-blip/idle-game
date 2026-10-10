@@ -42,6 +42,7 @@ bash scripts/vm/run.sh check       # 全検査
 bash scripts/vm/run.sh selftest    # 検査が落ちるべきときに落ちるか
 bash scripts/vm/run.sh play        # 検査 → 番号付け → ビルド → 公開
 bash scripts/vm/run.sh rollback 3  # build-3 の状態へ戻す
+bash scripts/vm/run.sh deploy -- --dry-run  # 公開の準備と安全確認だけ（送らない）
 bash scripts/vm/run.sh exit        # いまの段階の出口の検査
 bash scripts/vm/run.sh protect verify
 ```
