@@ -11,8 +11,8 @@
     "scripts/lib/env.ts": "b814b60d6060d4f366a2f2cb2d94c2e0672865a8c807e51176f2021b0a71504e",
     "scripts/lib/http.ts": "a9dc15fa131ef69f69a44367572a9705fa879b8acfd358927c698f8b479b9485",
     "scripts/vm/run.sh": "533c59336b7b763d55419714815b456ee904f48d617cf742cbc2d3021a2ea70f",
-    "spec/ACCEPTANCE.yaml": "72151b7eac297b700bcf48e8931bbed550a5427d4a35759afc2964c456aa5cca",
-    "spec/CORE_LOOP_CONTRACT.md": "cfdfdff9542d7977a3b0ac106d87065559becf3172df2ef23bab1b4426c999d9",
+    "spec/ACCEPTANCE.yaml": "63581e6e1dbefb03821a0aec53603e24c9f59bb603c8fa0cfdf24d21db9b5ef2",
+    "spec/CORE_LOOP_CONTRACT.md": "2bc79b1ec34993e5e50e45479cac42de5f73b930f3bfb0df1ad071c12150a9ba",
     "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
     "tsconfig.core.json": "0a0f18608c5eff846926e9083c47b7dbf8b53e7e262b39051853578678fe6e25",
     "tsconfig.json": "20729cadc6a64190bf6266460d4d9af5257dbd187bf8eb1560fddf80606b8acd"

@@ -1,0 +1,34 @@
+# 規模の見積もり（Claude が書く）。GAME_BRIEF.yaml の limits に収まることを、S1 の出口で検査する。
+
+days_of_content: 7
+
+# 画像の枚数（合計）。内訳は下
+images: 35
+image_breakdown:
+  members_human: 7        # 人間の団員
+  members_monster: 4      # 入団する魔物（ボスの絵を兼ねる）
+  enemies: 6              # 雑魚敵（色替えで12種にする）
+  backgrounds: 4          # 章ごとの背景
+  icons: 12               # 通貨、チケット、役割、ボタン類
+  title: 2                # タイトルとロゴ
+
+# 画面の数
+screens: 7
+screen_list:
+  - 旅（戦闘の表示と放置報酬の受け取り）
+  - 団員の一覧
+  - 団員の詳細（育成）
+  - 編成
+  - 勧誘
+  - 章の一覧
+  - 設定（セーブの書き出しと読み込み）
+
+# 仕組み
+systems:
+  - 旅（面の進行と自動戦闘）
+  - 放置報酬
+  - 団員（勧誘、入団、編成）
+  - 育成（レベル上げと昇格）
+
+chapters: 4
+stages_per_chapter: 10

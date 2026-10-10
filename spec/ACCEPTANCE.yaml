@@ -1,13 +1,29 @@
 # 合否の数字（スクリプトが合否の判定に使う）
 #
-# S1 で Claude が参考作と GAME_BRIEF の feel から提案し、あなたが G0 で承認します。
-# あなたの実プレイの記録と食い違ったときは、あなたの記録を正として直します。
-# 保護ファイルです。変えるにはあなたの承認が要ります。
+# S1 で Claude が提案し、ユーザーが G0 で承認する。
+# 値は Claude が置いた初期値で、根拠のある数字ではない。
+# ユーザーの実プレイの記録と食い違ったときは、ユーザーの記録を正として直す。
+# 保護ファイル。変えるにはユーザーの承認が要る。
 
-status: draft            # draft（未決定）| approved（承認済み）
+status: approved         # draft（未決定）| approved（承認済み）  ← 2026-10-10 G0 で承認
 
 players: [optimal, normal, lazy]   # 模擬プレイの行動: 最適 / ふつう / あまり開かない
 seeds: 100                         # 乱数の系列の数
 
-first_30min: {}          # S1 で決める
-day7: {}                 # G1 の後で決める
+# 最初の30分（速度変更なし、続けて遊んだ場合）
+first_30min:
+  # 到達した面の通し番号（1-1 が 1、2-1 が 11）。ふつうの人の中央値が第2章の中ほど
+  stage_reached:      { normal_p50: [14, 20], lazy_p10_min: 10 }
+  # 初めて負けるまでの分数。早すぎず、遅すぎない
+  first_defeat_min:   { normal_p50: [4, 8] }
+  # 初めてボスを倒して入団するまでの分数
+  first_join_min:     { normal_p50: [6, 10] }
+  # 持っている団員の数
+  members_owned:      { normal_p50: [5, 7] }
+  # 何も進まない時間の最長（分）
+  longest_stall_min:  { normal_p90_max: 5 }
+  # 1分あたりの操作の回数
+  taps_per_min:       { normal_p50_max: 15 }
+
+# 7日目。G1 の後で決める
+day7: {}
