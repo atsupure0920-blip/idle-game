@@ -245,6 +245,31 @@ export function winChance(g: GameData, ctx: Content, samples: number = 20): numb
   return wins / samples;
 }
 
+export interface Goals {
+  /** 次の勧誘チケットまで、あと何面突破すればよいか（もう届かないなら null）。 */
+  ticketIn: number | null;
+  /** 次のボスを倒すまで、あと何面か（すべて突破していれば null）。 */
+  bossIn: number | null;
+  /** 次のボスがいる面の通し番号。 */
+  bossStage: number | null;
+}
+
+/** 次の目標（画面に「あと○面」と出す）。 */
+export function nextGoals(g: GameData, ctx: Content): Goals {
+  const p = ctx.params;
+  const total = totalStages(p);
+  if (g.highestCleared >= total) return { ticketIn: null, bossIn: null, bossStage: null };
+  const next = g.highestCleared + 1;
+  const every = p.economy.ticketEveryStages;
+  const ticketStage = Math.ceil(next / every) * every;
+  const bossStage = Math.ceil(next / p.progress.stagesPerChapter) * p.progress.stagesPerChapter;
+  return {
+    ticketIn: ticketStage <= total ? ticketStage - g.highestCleared : null,
+    bossIn: bossStage - g.highestCleared,
+    bossStage,
+  };
+}
+
 export function ownedCount(g: GameData): number {
   return Object.keys(g.members).length;
 }

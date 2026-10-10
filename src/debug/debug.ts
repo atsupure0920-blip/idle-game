@@ -13,6 +13,10 @@ interface LogEntry {
 interface DebugOptions {
   buildId: string;
   getSaveText: () => string;
+  /** プレイの記録（遊んだ時間、到達した面、操作の回数、出来事）。 */
+  getPlayLines?: () => string[];
+  /** 「ログ」ボタンを置く場所。なければ画面の右下に浮かべる。 */
+  mount?: HTMLElement;
 }
 
 const MAX_ENTRIES = 200;
@@ -38,11 +42,16 @@ export function installDebug(opts: DebugOptions): void {
 
   const fab = document.createElement("button");
   fab.type = "button";
-  fab.className = "dbg-fab";
+  fab.className = opts.mount ? "dbg-chip" : "dbg-fab";
   fab.dataset["testid"] = "debug-log-button";
   fab.textContent = "ログ";
   fab.addEventListener("click", openSheet);
-  document.body.appendChild(fab);
+  (opts.mount ?? document.body).appendChild(fab);
+}
+
+/** ログの画面を開く（ほかの場所のボタンからも呼べるように）。 */
+export function openLogSheet(): void {
+  openSheet();
 }
 
 /** いまの状況をまとめたテキストを作る。 */
@@ -56,6 +65,13 @@ export function buildReport(): string {
   lines.push(`端末: ${navigator.userAgent}`);
   lines.push(`画面: ${window.innerWidth}x${window.innerHeight} (倍率 ${window.devicePixelRatio})`);
   lines.push(`ホーム画面から起動: ${nav.standalone === true ? "はい" : "いいえ"}`);
+  lines.push("");
+  lines.push("--- プレイの記録 ---");
+  try {
+    for (const l of options?.getPlayLines?.() ?? []) lines.push(l);
+  } catch (e) {
+    lines.push(`（記録を作れませんでした: ${String(e)}）`);
+  }
   lines.push("");
   lines.push(`--- エラー (${errors.length}件) ---`);
   for (const e of errors) lines.push(formatEntry(e));

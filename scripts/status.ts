@@ -152,6 +152,23 @@ if (stage === "S0") {
     accOk = false;
   }
   next.push(accOk ? "模擬プレイは合否の数字に合格。出口の検査（exit）が通れば「next」で S3 へ" : "模擬プレイが合否の数字に合格するまで、数値（params/）を調整する");
+} else if (stage === "S3") {
+  const url = publishUrl();
+  const latest = tags.length > 0 ? `build-${tags[tags.length - 1]}` : "";
+  const hasGame = latest !== "" && git(["cat-file", "-e", `${latest}:src/ui/session.ts`]).code === 0;
+  const g1 = read("feedback/G1.md") ?? "";
+  const verdict = /^判定:\s*(.+)$/m.exec(g1)?.[1]?.trim() ?? "";
+  if (!hasGame) {
+    next.push("灰色試作を作り、通し操作テストを通して、play で公開する");
+  } else if (verdict === "" || verdict.startsWith("未")) {
+    waiting.push(`公開URLを iPhone で開き、速度変更なしで30分遊ぶ: ${url}`);
+    waiting.push("終わったら、画面右上の「ログ」→「コピー」で記録を送る（感想は自由に）");
+    waiting.push("翌日にもう一度開いて、続きを遊ぶ");
+    waiting.push("初見の3人に、説明なしで10分遊んでもらう");
+    next.push("記録がそろったら、G1（続行の採点）を行う");
+  } else {
+    next.push(`G1 の判定は「${verdict}」。出口の検査（exit）が通れば「next」で S4 へ`);
+  }
 } else if (stage !== null) {
   next.push(`${stage} の表示は、この段階に入るときに追加します`);
 }

@@ -6,50 +6,38 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="放置ゲーム">
-  <meta name="theme-color" content="#f4f1ea">
-  <title>放置ゲーム（導通確認）</title>
+  <meta name="apple-mobile-web-app-title" content="旅の劇団">
+  <meta name="theme-color" content="#ecebe7">
+  <title>旅の劇団（灰色試作）</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="icon" type="image/png" href="icon-180.png">
   <link rel="stylesheet" href="style.css?v=%BUILD_ID%">
 </head>
 <body>
-  <main id="app">
-    <header>
-      <h1>導通確認</h1>
-      <p class="sub">この画面が出ていれば、公開から表示までがつながっています。</p>
+  <div id="app">
+    <header class="hud">
+      <div class="hud-stage"><small>いまの面</small><b data-testid="hud-stage">-</b></div>
+      <div class="hud-res">
+        <span class="res"><small>おひねり</small><b data-testid="hud-gold">0</b></span>
+        <span class="res"><small>チケット</small><b data-testid="hud-tickets">0</b></span>
+      </div>
+      <div id="hud-debug"></div>
     </header>
 
-    <section class="card" aria-label="状態">
-      <dl>
-        <div><dt>ビルド</dt><dd data-testid="build-id">-</dd></div>
-        <div><dt>起動した回数</dt><dd data-testid="opens">-</dd></div>
-        <div><dt>タップした回数</dt><dd data-testid="taps">-</dd></div>
-        <div><dt>前回から</dt><dd data-testid="away">-</dd></div>
-        <div><dt>開き方</dt><dd data-testid="launch-mode">-</dd></div>
-        <div><dt>保存</dt><dd data-testid="save-status">-</dd></div>
-      </dl>
+    <button type="button" class="notice" data-testid="notice" data-action="dismiss-notice" hidden></button>
+
+    <section id="journey" data-testid="journey">
+      <div id="field" class="field" data-testid="field"></div>
+      <div id="journey-info" class="journey-info"></div>
     </section>
 
-    <button type="button" class="tap" data-testid="tap-button">タップ</button>
+    <main id="panel" class="panel" data-testid="panel" hidden></main>
 
-    <p class="notice" data-testid="notice" hidden></p>
-
-    <section class="card guide" data-testid="a2hs-guide" hidden>
-      <h2>ホーム画面に追加してください</h2>
-      <p>Safariの共有ボタン（四角から矢印が出ているボタン）を押し、「ホーム画面に追加」を選びます。追加したアイコンから開くと、セーブが消えにくくなります。</p>
-    </section>
-
-    <section class="card">
-      <h2>確かめること</h2>
-      <ol>
-        <li>「タップ」を何回か押す。</li>
-        <li>画面を閉じて、もう一度開く。</li>
-        <li>タップした回数が残っていて、起動した回数が1つ増えていれば合格。</li>
-      </ol>
-    </section>
-  </main>
+    <nav id="tabs" class="tabs"></nav>
+  </div>
+  <div id="modal-root" class="modal-root" hidden></div>
+  <div id="toast-root" class="toast-root"></div>
   <script src="app.js?v=%BUILD_ID%"></script>
 </body>
 </html>

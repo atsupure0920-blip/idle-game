@@ -44,8 +44,13 @@ bash scripts/vm/run.sh play        # 検査 → 番号付け → ビルド → �
 bash scripts/vm/run.sh rollback 3  # build-3 の状態へ戻す
 bash scripts/vm/run.sh deploy -- --dry-run  # 公開の準備と安全確認だけ（送らない）
 bash scripts/vm/run.sh exit        # いまの段階の出口の検査
+bash scripts/vm/run.sh acceptance  # 合否の数字（模擬プレイ）
+bash scripts/vm/run.sh e2e-gate    # 通し操作テストの記録が、いまのソースのものか
 bash scripts/vm/run.sh protect -- verify    # 引数を渡すときは「--」を挟む
 ```
+
+通し操作テスト（`tests/e2e/run.ts`）は、本物のブラウザが要るので、この作業環境では走らない。
+画面やルールを変えたら、Claude 側の環境で実行して記録を置く（`pipeline/rules/ui.md` の「画面を変えたとき」）。
 
 git の操作（記録、番号付け）は、このフォルダに対して直接行う。記録の前に、接続フォルダでの削除の許可が要る
 （git が一時ファイルを消すため）。
@@ -72,7 +77,9 @@ git の操作（記録、番号付け）は、このフォルダに対して直�
 | `spec/CORE_LOOP_CONTRACT.md` | 最初の10分の台本とルール（Claudeが書き、ユーザーが承認） |
 | `spec/ACCEPTANCE.yaml` | 合否の数字 |
 | `src/core/` | ルール（純粋） |
-| `src/ui/` | 画面（HTML/CSS） |
+| `src/sim/` | 模擬プレイ |
+| `params/` | 数値と団員の定義 |
+| `src/ui/` | 画面（HTML/CSS）と進行役 |
 | `src/debug/` | エラー表示とログの書き出し（公開用ビルドには入らない） |
 | `tests/` | テスト |
 | `scripts/` | ビルド、検査、状況、ロールバック |

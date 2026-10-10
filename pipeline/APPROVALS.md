@@ -8,3 +8,4 @@
 - 2026-10-10 承認: G0: ユーザーが契約書（最初の10分の台本、ルール、補完した決定1〜12）と合否の数字（最初の30分）を承認（2026-10-10）（変更: spec/ACCEPTANCE.yaml, spec/CORE_LOOP_CONTRACT.md）
 - 2026-10-10 追加: scripts/check/acceptance.ts, scripts/check/exit/S2.ts, tests/game.test.ts
 - 2026-10-10 承認: 2026-10-11 ユーザーの回答（提案13は却下、14は採用、15は採用＋挑発と優先攻撃の能力を追加）を契約書に反映。テストは、13の却下に合わせて「新しい団員はレベル1から」に直し、狙う相手・挑発・後列ねらいのテスト3件を足した（緩める変更はなし）（変更: spec/CORE_LOOP_CONTRACT.md, tests/game.test.ts）
+- 2026-10-10 追加: scripts/check/e2e-gate.ts, scripts/check/exit/S3.ts, scripts/lib/source-hash.ts, tests/e2e/run.ts, tests/flow.test.ts

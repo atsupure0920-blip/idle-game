@@ -2,6 +2,7 @@
 //
 //   node scripts/build.ts            … 遊んで確かめる用（ログ機能つき）
 //   node scripts/build.ts --release  … 公開用（デバッグ機能なし、圧縮あり）
+//   node scripts/build.ts --out 場所  … 出力先を変える（既定は dist）
 
 import { build } from "esbuild";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -9,7 +10,12 @@ import path from "node:path";
 import { currentBuildId } from "./lib/env.ts";
 
 const release = process.argv.includes("--release");
-const outDir = "dist";
+// 数値と団員の定義は、ビルド時に画面のコードへ埋め込む（読み込みの失敗が起きないように）。
+const params = JSON.parse(await readFile("params/base.json", "utf8")) as unknown;
+const members = JSON.parse(await readFile("params/members.json", "utf8")) as unknown;
+// 出力先。ふだんは dist/。通し操作テストが公開用ビルドを別の場所に作るときだけ、--out で変える。
+const outArg = process.argv.indexOf("--out");
+const outDir = outArg >= 0 && process.argv[outArg + 1] ? (process.argv[outArg + 1] as string) : "dist";
 const buildId = currentBuildId();
 
 await rm(outDir, { recursive: true, force: true });
@@ -26,6 +32,8 @@ await build({
   define: {
     __BUILD_ID__: JSON.stringify(buildId),
     __DEBUG__: release ? "false" : "true",
+    __PARAMS__: JSON.stringify(params),
+    __MEMBERS__: JSON.stringify(members),
   },
   logLevel: "warning",
 });

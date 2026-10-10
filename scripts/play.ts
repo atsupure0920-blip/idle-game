@@ -2,7 +2,7 @@
 //
 //   node scripts/play.ts
 //
-// 流れ: 未記録の変更がないか → 全検査 → 合否の数字（模擬プレイ）→ 番号を付ける（build-N）→ ビルド → 公開
+// 流れ: 未記録の変更がないか → 全検査 → 合否の数字（模擬プレイ）→ 通し操作テストの記録 → 番号を付ける（build-N）→ ビルド → 公開
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -36,6 +36,16 @@ if (existsSync("params/base.json") && existsSync("scripts/check/acceptance.ts"))
   if (acc.code !== 0) {
     process.stderr.write(acc.err);
     fail("合否の数字に合格していないので、ビルドは出しません。");
+  }
+}
+
+// 通し操作テスト（本物のブラウザ）の記録が、いまのソースのものか（画面ができてから。S3 以降）
+if (existsSync("scripts/check/e2e-gate.ts") && existsSync("tests/e2e/run.ts")) {
+  const gate = runNode(["scripts/check/e2e-gate.ts"]);
+  process.stdout.write(gate.out);
+  if (gate.code !== 0) {
+    process.stderr.write(gate.err);
+    fail("通し操作テストに合格した記録がないので、ビルドは出しません。");
   }
 }
 
