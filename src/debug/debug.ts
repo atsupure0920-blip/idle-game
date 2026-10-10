@@ -112,7 +112,7 @@ function openSheet(): void {
   const title = document.createElement("strong");
   title.textContent = "ログ";
   const hint = document.createElement("span");
-  hint.textContent = "「ファイルで送る」か「コピー」で取り出して、Claudeに渡してください。";
+  hint.textContent = "「コピー」を押し、iPhoneのClaudeでいつもの会話を開いて、貼り付けて送ってください。";
   hint.style.fontSize = "13px";
   const area = document.createElement("textarea");
   area.readOnly = true;
