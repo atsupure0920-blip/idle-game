@@ -11,12 +11,12 @@ seeds: 100
 
 # 最初の30分（速度変更なし、続けて遊んだ場合）
 first_30min:
-  # 到達した面の通し番号（1-1 が 1、2-1 が 11）。ふつうの人の中央値が、第2章の中ほどから終わり
-  stage_reached:        { normal_p50: [14, 20], lazy_p10_min: 8 }
-  # 初めて負けるまでの分数
-  first_defeat_min:     { normal_p50: [3, 8] }
+  # 到達した面の通し番号（1-1 が 1、2-1 が 11）。ふつうの人の中央値が、第2章の終わりから第3章の中ほど
+  stage_reached:        { normal_p50: [18, 26], lazy_p10_min: 10 }
+  # 初めて負けるまでの分数。序盤では止めない（第1章では負けない）
+  first_defeat_min:     { normal_p50: [12, 25] }
   # 初めてボスを倒して、相棒になるまでの分数
-  first_companion_min:  { normal_p50: [6, 12] }
+  first_companion_min:  { normal_p50: [5, 10] }
   # 最初の10分に勧誘した回数（序盤に、たくさん回せること）
   recruits_10min:       { normal_p50_min: 8 }
   # 持っている団員の数（人間は7人まで）
