@@ -1,4 +1,4 @@
-// 画面の入口（第2版）。実際の時刻と保存領域を扱うのはこの層だけで、ルールは core に任せる。
+// 画面の入口（第3版）。実際の時刻と保存領域を扱うのはこの層だけで、ルールは core に任せる。
 //
 // 仕組み:
 //   - 進行役（session.ts）が、ゲームの状態を持って進める。
@@ -6,14 +6,14 @@
 //   - 戦闘の表示（battleview.ts）は、計算済みの戦闘を、毎フレーム時間どおりに再生する。
 //   - 押せる要素は data-action を持ち、ここでまとめて受ける。
 
-import { buildContent, isBossStage, stageLabel } from "../core/params.ts";
-import type { ContentData } from "../core/params.ts";
-import { allySpecs, dailyList, enemySpecs, idlePending, missionList, nextStage } from "../core/game.ts";
+import { buildContent, isBossStage, levelCap, stageLabel } from "../core/params.ts";
+import type { BannerId, ContentData, EquipSlot } from "../core/params.ts";
+import { FRONT_SIZE, allySpecs, battleStats, dailyList, enemySpecs, idlePending, maxAffordableLevel, missionList, nextStage } from "../core/game.ts";
 import type { GameEvent, RewardAmounts } from "../core/game.ts";
 import { createSession, playLogLines } from "./session.ts";
 import { backupSave, isStandalone, readStore, requestPersistence, writeStore } from "./storage.ts";
 import { createBattleView } from "./battleview.ts";
-import { fighterName, formatNumber, rewardText } from "./texts.ts";
+import { equipName, fighterName, formatNumber, rewardText } from "./texts.ts";
 import {
   TABS,
   badges,
@@ -21,16 +21,16 @@ import {
   companionsHtml,
   journeyInfoHtml,
   journeyLive,
-  memberDetailHtml,
+  memberModalHtml,
   membersHtml,
   missionsHtml,
   otherHtml,
   partyHtml,
+  ratesHtml,
   recruitHtml,
-  recruitManyHtml,
   recruitResultHtml,
 } from "./views.ts";
-import type { RecruitOutcome, Tab, UiState } from "./views.ts";
+import type { Tab, UiState } from "./views.ts";
 import { installDebug, logEvent, openLogSheet } from "../debug/debug.ts";
 import { debugPanelHtml } from "../debug/panel.ts";
 
@@ -38,8 +38,6 @@ const TICK_MS = 200;
 const AUTOSAVE_MS = 10_000;
 /** ポップアップが出てから、この時間はポップアップの中のボタンを受け付けない（押し間違いを防ぐ）。 */
 const MODAL_GUARD_MS = 400;
-/** まとめて勧誘で、一度に使うチケットの上限。 */
-const RECRUIT_MANY = 10;
 /** これより長く離れていたら、戻ったときに「箱に貯まっています」と知らせる。 */
 const WELCOME_BACK_MS = 5 * 60_000;
 
@@ -78,6 +76,7 @@ function start(): void {
     tab: "journey",
     selectedSlot: null,
     result: null,
+    detail: null,
     feed: [],
     buildId: __BUILD_ID__,
     debug: __DEBUG__,
@@ -99,6 +98,7 @@ function start(): void {
   const hudStage = byTestId("hud-stage");
   const hudGold = byTestId("hud-gold");
   const hudTickets = byTestId("hud-tickets");
+  const hudPremium = byTestId("hud-premium");
   const otherButton = byTestId("tab-other");
   const battle = createBattleView(need("field"));
 
@@ -140,6 +140,8 @@ function start(): void {
   /** 順番に出すポップアップ。中身は、状態が変わるたびに作り直す。 */
   interface Modal {
     html: () => string;
+    /** 団員の詳細か（閉じるときに、画面の状態も片づける）。 */
+    detail?: boolean;
   }
   const modals: Modal[] = [];
   let modalHtml = "";
@@ -159,11 +161,13 @@ function start(): void {
     modalRoot.hidden = false;
     modalRoot.innerHTML = `<div class="modal" data-testid="modal">${html}</div>`;
   };
-  const openModal = (html: () => string): void => {
-    modals.push({ html });
+  const openModal = (html: () => string, detail = false): void => {
+    modals.push({ html, detail });
     renderModal();
   };
   const closeModal = (): void => {
+    // 団員の詳細は、開いているあいだ ui.detail を持つ。閉じたら消す
+    if (modals[0]?.detail === true) ui.detail = null;
     modals.shift();
     modalHtml = "";
     modalRoot.hidden = true;
@@ -175,7 +179,7 @@ function start(): void {
   const handle = (events: GameEvent[]): void => {
     for (const e of events) {
       if (e.type === "win") {
-        ui.result = { type: "win", stage: e.stage, reward: e.reward, companionId: null };
+        ui.result = { type: "win", stage: e.stage, reward: e.reward, equipDefId: e.equipDefId, companionId: null };
         feed(`${stageLabel(e.stage, p)} を突破（${rewardText(e.reward)}）`);
         // 旅の画面では、結果の欄に出るので、ほかの画面を見ているときだけ知らせる
         if (ui.tab !== "journey") toast(`${stageLabel(e.stage, p)} を突破！ おひねり +${formatNumber(e.reward.gold)}`, "good");
@@ -281,6 +285,7 @@ function start(): void {
     hudStage.textContent = next === null ? "達成" : stageLabel(next, p);
     hudGold.textContent = formatNumber(g.gold);
     hudTickets.textContent = String(g.tickets);
+    hudPremium.textContent = String(g.premiumTickets);
     if (lastGold >= 0 && g.gold > lastGold) {
       hudGold.classList.remove("pop");
       void hudGold.offsetWidth;
@@ -338,7 +343,7 @@ function start(): void {
 
   /** 達成したミッションと日課を、まとめて受け取る。受け取った件数と、合計を返す。 */
   const claimAll = (): { count: number; total: RewardAmounts } => {
-    const total: RewardAmounts = { gold: 0, tickets: 0, mats: 0 };
+    const total: RewardAmounts = { gold: 0, tickets: 0, premiumTickets: 0, mats: 0 };
     let count = 0;
     for (let guard = 0; guard < 200; guard++) {
       const g = session.game();
@@ -349,6 +354,7 @@ function start(): void {
       count += 1;
       total.gold += r.reward.gold;
       total.tickets += r.reward.tickets;
+      total.premiumTickets += r.reward.premiumTickets;
       total.mats += r.reward.mats;
     }
     return { count, total };
@@ -376,36 +382,119 @@ function start(): void {
           const mats = Object.entries(r.mats ?? {})
             .map(([cid, n]) => `${content.companionById[cid]?.material ?? ""} +${n}`)
             .join("、");
-          toast(`箱から おひねり +${formatNumber(r.gold ?? 0)}${mats ? `、${mats}` : ""}`, "good");
+          const equips = (r.equips ?? []).length;
+          toast(`箱から おひねり +${formatNumber(r.gold ?? 0)}${mats ? `、${mats}` : ""}${equips > 0 ? `、装備 +${equips}` : ""}`, "good");
         } else fail(r.reason);
         break;
       }
       case "levelup": {
-        const r = session.levelUp(id);
-        if (!r.ok) fail(r.reason);
+        // 「+1」と「+10」。+10 は、上限が近ければ上限まで
+        const own = session.game().members[id];
+        const def = content.byId[id];
+        if (!own || !def) break;
+        const ten = el.dataset["n"] === "10";
+        const target = ten ? Math.min(own.level + 10, levelCap(def, own.plus, p)) : own.level + 1;
+        const r = session.levelUpTo(id, target, ten ? "+10" : "+1");
+        if (r.ok && ten) toast(`${def.name} のレベル +${r.levels ?? 0}`, "good");
+        else if (!r.ok) fail(r.reason);
         break;
       }
-      case "levelmax": {
-        const r = session.levelUpMax(id);
-        if (r.ok) toast(`${content.byId[id]?.name ?? ""} のレベル +${r.levels ?? 0}`, "good");
-        else fail(r.reason);
+      case "detail":
+        ui.detail = { id, view: "main", slot: null, target: 0, resetArmed: false };
+        openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
+        break;
+      case "level-open": {
+        const own = session.game().members[id !== "" ? id : (ui.detail?.id ?? "")];
+        const mid = id !== "" ? id : (ui.detail?.id ?? "");
+        if (!own) break;
+        const wasOpen = ui.detail !== null;
+        ui.detail = { id: mid, view: "level", slot: null, target: own.level + 1, resetArmed: false };
+        if (!wasOpen) openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
         break;
       }
-      case "train-party": {
-        const r = session.trainParty();
-        if (r.ok) toast(`編成の団員のレベル 合計 +${r.levels ?? 0}`, "good");
+      case "level-step":
+      case "level-max": {
+        const d = ui.detail;
+        const own = d ? session.game().members[d.id] : undefined;
+        if (!d || !own) break;
+        const max = Math.max(own.level + 1, maxAffordableLevel(session.game(), d.id, content));
+        const current = Math.max(own.level + 1, Math.min(d.target, max));
+        const next = action === "level-max" ? max : current + Number(el.dataset["d"] ?? "0");
+        ui.detail = { ...d, target: Math.max(own.level + 1, Math.min(next, max)) };
+        break;
+      }
+      case "level-confirm": {
+        const d = ui.detail;
+        const own = d ? session.game().members[d.id] : undefined;
+        if (!d || !own) break;
+        const max = Math.max(own.level + 1, maxAffordableLevel(session.game(), d.id, content));
+        const target = Math.max(own.level + 1, Math.min(d.target, max));
+        const r = session.levelUpTo(d.id, target, "指定");
+        if (r.ok) {
+          toast(`${content.byId[d.id]?.name ?? ""} を Lv ${target} に上げました（+${r.levels ?? 0}）`, "good");
+          ui.detail = { ...d, view: "main" };
+        } else fail(r.reason);
+        break;
+      }
+      case "detail-back":
+        if (ui.detail) ui.detail = { ...ui.detail, view: "main", slot: null, resetArmed: false };
+        break;
+      case "reset":
+        if (ui.detail) ui.detail = { ...ui.detail, resetArmed: true };
+        break;
+      case "reset-confirm": {
+        const d = ui.detail;
+        if (!d) break;
+        const r = session.resetLevel(d.id);
+        if (r.ok) toast(`${content.byId[d.id]?.name ?? ""} をリセットしました。おひねり +${formatNumber(r.refund ?? 0)}`, "good");
         else fail(r.reason);
+        ui.detail = { ...d, resetArmed: false };
         break;
       }
       case "promote": {
         const r = session.promote(id);
-        if (r.ok) toast(`${content.byId[id]?.name ?? ""} が昇格！（★+1）`, "good");
+        if (r.ok) toast(`${content.byId[id]?.name ?? ""} が昇格！（+${session.game().members[id]?.plus ?? 0}）`, "good");
         else fail(r.reason);
         break;
       }
-      case "detail":
-        openModal(() => memberDetailHtml(session.game(), content, id));
+      case "slot-open":
+        if (ui.detail) ui.detail = { ...ui.detail, view: "slot", slot: (el.dataset["slot"] ?? "weapon") as EquipSlot, resetArmed: false };
         break;
+      case "equip": {
+        const d = ui.detail;
+        if (!d) break;
+        const r = session.equip(Number(el.dataset["uid"]), d.id);
+        if (r.ok) ui.detail = { ...d, view: "main", slot: null };
+        else fail(r.reason);
+        break;
+      }
+      case "unequip": {
+        const r = session.unequip(Number(el.dataset["uid"]));
+        if (!r.ok) fail(r.reason);
+        break;
+      }
+      case "enhance": {
+        const uid = Number(el.dataset["uid"]);
+        const r = session.enhance(uid);
+        if (r.ok) {
+          const item = session.game().equips.find((e) => e.uid === uid);
+          const def = item ? content.equipById[item.defId] : undefined;
+          if (item && def) toast(`${equipName(def, item.level)} に強化しました`, "good");
+        } else fail(r.reason);
+        break;
+      }
+      case "auto-equip": {
+        const r = session.autoEquip(id);
+        if (r.ok) toast(`装備を ${r.changed ?? 0}か所、付け替えました`, "good");
+        else fail(r.reason);
+        break;
+      }
+      case "auto-equip-party": {
+        const r = session.autoEquipParty();
+        if (r.ok) toast(`編成の装備を ${r.changed ?? 0}か所、付け替えました`, "good");
+        else fail(r.reason);
+        break;
+      }
       case "slot": {
         const slot = Number(el.dataset["slot"]);
         ui.selectedSlot = ui.selectedSlot === slot ? null : slot;
@@ -425,30 +514,50 @@ function start(): void {
         break;
       }
       case "recruit": {
-        const r = session.recruit();
-        if (r.ok && r.id) {
-          const rid = r.id;
-          const dup = r.duplicate === true;
-          openModal(() => recruitResultHtml(session.game(), content, rid, dup));
+        const banner = (el.dataset["banner"] === "premium" ? "premium" : "normal") as BannerId;
+        const r = session.recruit(banner, Number(el.dataset["count"] ?? "1"));
+        if (r.ok && r.results) {
+          const outcomes = r.results;
+          openModal(() => recruitResultHtml(session.game(), content, outcomes));
         } else fail(r.reason);
         break;
       }
-      case "recruit-all": {
-        const outcomes: RecruitOutcome[] = [];
-        for (let i = 0; i < RECRUIT_MANY; i++) {
-          const r = session.recruit();
-          if (!r.ok || !r.id) break;
-          outcomes.push({ id: r.id, duplicate: r.duplicate === true });
-        }
-        if (outcomes.length > 0) openModal(() => recruitManyHtml(session.game(), content, outcomes));
-        else fail("勧誘チケットがありません");
+      case "rates": {
+        const banner = (el.dataset["banner"] === "premium" ? "premium" : "normal") as BannerId;
+        openModal(() => ratesHtml(session.game(), content, banner));
         break;
       }
-      case "place-empty": {
-        const slot = firstEmptySlot();
-        if (slot !== null) {
-          const r = session.setSlot(slot, id);
-          if (r.ok) toast(`${content.byId[id]?.name ?? ""} を編成に入れました`, "good");
+      case "fill-empty": {
+        // 編成の空きを、控えの団員で埋める（レア度の高い順。同じなら、能力の高い順）
+        let placed = 0;
+        for (let guard = 0; guard < 6; guard++) {
+          const g = session.game();
+          const slot = g.party.indexOf(null);
+          if (slot < 0) break;
+          const rank = (mid: string): number => {
+            const r = p.recruit.rarities[content.byId[mid]?.rarity ?? ""];
+            return (r?.stars ?? 0) * 10 + (r?.statMult ?? 0);
+          };
+          const bench = Object.keys(g.members)
+            .filter((mid) => !g.party.includes(mid))
+            .sort((a, b) => rank(b) - rank(a));
+          const best = bench[0];
+          if (best === undefined || !session.setSlot(slot, best).ok) break;
+          placed += 1;
+        }
+        // 体力の高い団員を前列へ（敵は前列を先に狙うので）
+        if (placed > 0) {
+          for (let guard = 0; guard < 6; guard++) {
+            const g = session.game();
+            const hp = (mid: string): number => battleStats(g, mid, content)?.hp ?? 0;
+            const ids = g.party.filter((x): x is string => x !== null).sort((a, b) => hp(b) - hp(a));
+            const sturdy = ids.slice(0, Math.min(FRONT_SIZE, ids.length));
+            const frontSlot = g.party.findIndex((x, i) => i < FRONT_SIZE && (x === null || !sturdy.includes(x)));
+            const backSlot = g.party.findIndex((x, i) => i >= FRONT_SIZE && x !== null && sturdy.includes(x));
+            if (frontSlot < 0 || backSlot < 0) break;
+            if (!session.setSlot(frontSlot, g.party[backSlot] as string).ok) break;
+          }
+          toast(`${placed}人を編成に入れ、体力の高い順に前列へ並べました`, "good");
         }
         closeModal();
         break;
@@ -520,13 +629,14 @@ function start(): void {
         toast("時間を送りました");
         break;
       case "dbg-grant":
-        session.debugGrant(Number(el.dataset["gold"]), Number(el.dataset["tickets"]), Number(el.dataset["mats"]));
+        session.debugGrant({ gold: Number(el.dataset["gold"]), tickets: Number(el.dataset["tickets"]), premiumTickets: Number(el.dataset["premium"]), mats: Number(el.dataset["mats"]) });
         break;
       case "dbg-reset":
         if (el.dataset["armed"] === "1") {
           session.debugReset();
           ui.feed = [];
           ui.result = null;
+          ui.detail = null;
           ui.exportText = "";
           ui.importMessage = "";
           lastHtml["panel"] = "";

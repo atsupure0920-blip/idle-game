@@ -1,4 +1,4 @@
-// 1回の起動のあいだ、ゲームの状態を持って進める「進行役」（第2版）。
+// 1回の起動のあいだ、ゲームの状態を持って進める「進行役」（第3版）。
 //
 // 画面（DOM）には触れない。時計と保存領域は外から受け取るので、ブラウザがなくてもテストできる
 // （tests/flow.test.ts が、起動 → 操作 → 保存 → 開き直し、を通しで確かめる）。
@@ -10,27 +10,43 @@ import { deserialize, serialize } from "../core/save.ts";
 import type { BattleResult, CompanionSpec, FighterSpec } from "../core/battle.ts";
 import {
   advance,
+  autoEquip,
+  autoEquipParty,
   challenge,
   claimDaily,
   claimMission,
   collectIdle,
   companionLevelUp,
   createGame,
+  enhanceEquip,
+  equipItem,
+  equippedCount,
   idlePending,
-  levelUp,
-  levelUpMax,
+  levelUpTo,
   nextStage,
   ownedCount,
   promote,
   recruit,
+  resetLevel,
   sanitizeGame,
   setCompanion,
   setPartySlot,
-  trainParty,
+  unequipItem,
 } from "../core/game.ts";
-import type { ActionResult, BulkResult, ChallengeResult, ClaimResult, CollectResult, GameData, GameEvent, RecruitResult } from "../core/game.ts";
+import type {
+  ActionResult,
+  AutoEquipResult,
+  ChallengeResult,
+  ClaimResult,
+  CollectResult,
+  GameData,
+  GameEvent,
+  LevelUpResult,
+  RecruitResult,
+  ResetResult,
+} from "../core/game.ts";
 import { stageLabel } from "../core/params.ts";
-import type { Content } from "../core/params.ts";
+import type { BannerId, Content } from "../core/params.ts";
 
 export type StoreKey = "save" | "playlog" | "debug";
 
@@ -84,7 +100,10 @@ export interface BattleReplay {
   companion: CompanionSpec | null;
 }
 
-const MAX_MARKS = 500;
+/** レベル上げを、どのボタンでしたか（プレイの記録に残す）。 */
+export type LevelHow = "+1" | "+10" | "指定";
+
+const MAX_MARKS = 600;
 const CHECKPOINT_MINUTES = [10, 20, 30, 45, 60];
 /** これより長く tick が空いたら、その間は「遊んでいなかった」とみなす。 */
 const ACTIVE_GAP_MS = 5000;
@@ -116,14 +135,20 @@ export interface Session {
   tick: () => GameEvent[];
   challenge: () => ChallengeResult;
   collectIdle: () => CollectResult;
-  levelUp: (id: string) => ActionResult;
-  levelUpMax: (id: string) => BulkResult;
-  trainParty: () => BulkResult;
+  /** 団員を、指定のレベルまで上げる（+1、+10、レベルの指定）。 */
+  levelUpTo: (id: string, target: number, how: LevelHow) => LevelUpResult;
+  resetLevel: (id: string) => ResetResult;
   promote: (id: string) => ActionResult;
-  recruit: () => RecruitResult;
+  /** 勧誘する。count は 1 か 10。 */
+  recruit: (banner: BannerId, count: number) => RecruitResult;
   setSlot: (slot: number, id: string | null) => ActionResult;
   setCompanion: (id: string | null) => ActionResult;
   companionLevelUp: (id: string) => ActionResult;
+  equip: (uid: number, memberId: string) => ActionResult;
+  unequip: (uid: number) => ActionResult;
+  enhance: (uid: number) => ActionResult;
+  autoEquip: (memberId: string) => AutoEquipResult;
+  autoEquipParty: () => AutoEquipResult;
   claimMission: (id: string) => ClaimResult;
   claimDaily: (id: string) => ClaimResult;
   save: () => void;
@@ -131,7 +156,7 @@ export interface Session {
   importSave: (text: string) => ImportResult;
   debugSetSpeed: (speed: number) => void;
   debugAddTime: (ms: number) => void;
-  debugGrant: (gold: number, tickets: number, mats?: number) => void;
+  debugGrant: (grant: { gold?: number; tickets?: number; premiumTickets?: number; mats?: number }) => void;
   debugReset: () => void;
 }
 
@@ -256,6 +281,9 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     const next = nextStage(game, content);
     return next === null ? "すべて突破" : label(next);
   };
+  const memberName = (id: string): string => content.byId[id]?.name ?? id;
+  const starsOf = (id: string): number => content.params.recruit.rarities[content.byId[id]?.rarity ?? ""]?.stars ?? 0;
+  const isElite = (id: string): boolean => content.params.recruit.rarities[content.byId[id]?.rarity ?? ""]?.elite === true;
 
   let replay: BattleReplay | null = null;
   /** 最後に負けた面（再挑戦かどうかを、記録に残すため）。 */
@@ -265,7 +293,8 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     for (const e of events) {
       if (e.type === "win") {
         const extra = [`おひねり +${e.reward.gold}`];
-        if (e.reward.tickets > 0) extra.push(`チケット +${e.reward.tickets}`);
+        if (e.reward.tickets > 0) extra.push(`通常チケット +${e.reward.tickets}`);
+        if (e.equipDefId !== null) extra.push(`装備: ${content.equipById[e.equipDefId]?.name ?? e.equipDefId}`);
         mark(`${label(e.stage)} を突破（${extra.join("、")}）`);
       } else if (e.type === "defeat") {
         lastDefeatStage = e.stage;
@@ -285,7 +314,7 @@ export function createSession(deps: SessionDeps, content: Content): Session {
         const actions = Object.values(log.counts).reduce((a, b) => a + b, 0);
         mark(
           `■ 遊んで${c}分: 次は ${nextLabel()}（突破 ${game.highestCleared}面、団員 ${ownedCount(game)}人、相棒 ${Object.keys(game.companions).length}体、` +
-            `勧誘 ${game.counters.recruits}回、編成のレベル合計 ${partyLevels(game)}、操作 ${actions}回、負け ${game.stats.defeats}回）`,
+            `勧誘 ${game.counters.recruits}回、編成のレベル合計 ${partyLevels(game)}、装備 ${equippedCount(game)}か所、操作 ${actions}回、負け ${game.stats.defeats}回）`,
         );
       }
     }
@@ -360,20 +389,44 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     collectIdle: () => {
       const pending = idlePending(game, now(), content);
       const r = act("箱の受け取り", (g) => collectIdle(g, now(), content));
-      if (r.ok) mark(`箱から受け取り: おひねり ${r.gold ?? 0}（貯めていた時間 ${formatAway(pending.elapsedMs)}${pending.capped ? "、上限" : ""}）`);
+      if (r.ok) {
+        const equips = (r.equips ?? []).length;
+        mark(`箱から受け取り: おひねり ${r.gold ?? 0}${equips > 0 ? `、装備 ${equips}こ` : ""}（貯めていた時間 ${formatAway(pending.elapsedMs)}${pending.capped ? "、上限" : ""}）`);
+      }
       return r;
     },
-    levelUp: (id) => act("稽古（1つ）", (g) => levelUp(g, id, content)),
-    levelUpMax: (id) => act("稽古（まとめて）", (g) => levelUpMax(g, id, content)),
-    trainParty: () => act("稽古（編成をまとめて）", (g) => trainParty(g, content)),
+    levelUpTo: (id, target, how) => {
+      const r = act(`稽古（${how}）`, (g) => levelUpTo(g, id, target, content));
+      // 「指定」と「+10」は回数が少ないので、何をしたかを残す（+1 は数だけ）
+      if (r.ok && how !== "+1") mark(`稽古（${how}）: ${memberName(id)} を Lv${target} に（+${r.levels ?? 0}）`);
+      return r;
+    },
+    resetLevel: (id) => {
+      const before = game.members[id]?.level ?? 0;
+      const r = act("リセット", (g) => resetLevel(g, id, content));
+      if (r.ok) mark(`リセット: ${memberName(id)}（Lv${before} → 1、おひねり +${r.refund ?? 0}）`);
+      return r;
+    },
     promote: (id) => {
       const r = act("昇格", (g) => promote(g, id, content));
-      if (r.ok) mark(`${content.byId[id]?.name ?? id} を昇格`);
+      if (r.ok) mark(`${memberName(id)} を昇格（+${game.members[id]?.plus ?? 0}）`);
       return r;
     },
-    recruit: () => {
-      const r = act("勧誘", (g) => recruit(g, content));
-      if (r.ok && r.id) mark(`勧誘: ${content.byId[r.id]?.name ?? r.id}${r.duplicate ? "（かけら）" : "（新しい団員）"}`);
+    recruit: (banner, n) => {
+      const name = `勧誘（${banner === "premium" ? "高級" : "通常"}・${n === 10 ? "10連" : "1回"}）`;
+      const r = act(name, (g) => recruit(g, banner, n, content));
+      if (r.ok && r.results) {
+        const results = r.results;
+        if (results.length === 1) {
+          const x = results[0];
+          if (x) mark(`${name}: ${memberName(x.id)} ★${starsOf(x.id)}${isElite(x.id) ? "エリート" : ""}${x.duplicate ? "（かけら）" : "（新しい団員）"}`);
+        } else {
+          const by = [3, 2, 1].map((s) => `★${s} ×${results.filter((x) => starsOf(x.id) === s).length}`).join("、");
+          const top = results.filter((x) => starsOf(x.id) >= 3).map((x) => `${memberName(x.id)}${isElite(x.id) ? "（エリート）" : ""}`);
+          const fresh = results.filter((x) => !x.duplicate).length;
+          mark(`${name}: ${by}（新しい団員 ${fresh}人${top.length > 0 ? `。★3: ${top.join("、")}` : ""}）`);
+        }
+      }
       return r;
     },
     setSlot: (slot, id) => act("編成", (g) => setPartySlot(g, slot, id)),
@@ -385,6 +438,15 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     companionLevelUp: (id) => {
       const r = act("相棒のレベル上げ", (g) => companionLevelUp(g, id, content));
       if (r.ok) mark(`${content.companionById[id]?.name ?? id} を Lv${game.companions[id]?.level ?? 0} に`);
+      return r;
+    },
+    equip: (uid, memberId) => act("装備の付け替え", (g) => equipItem(g, uid, memberId, content)),
+    unequip: (uid) => act("装備を外す", (g) => unequipItem(g, uid)),
+    enhance: (uid) => act("装備の強化", (g) => enhanceEquip(g, uid, content)),
+    autoEquip: (memberId) => act("おまかせ装備（1人）", (g) => autoEquip(g, memberId, content)),
+    autoEquipParty: () => {
+      const r = act("おまかせ装備（編成）", (g) => autoEquipParty(g, content));
+      if (r.ok) mark(`おまかせ装備（編成）: ${r.changed ?? 0}か所を付け替え（付けている装備 ${equippedCount(game)}か所）`);
       return r;
     },
     claimMission: (id) => {
@@ -435,14 +497,15 @@ export function createSession(deps: SessionDeps, content: Content): Session {
       mark(`デバッグ: 時間を ${formatAway(ms)} 送った`);
       save();
     },
-    debugGrant: (gold, tickets, mats = 0) => {
+    debugGrant: (grant) => {
       if (!deps.debug) return;
-      const add = Math.max(0, Math.floor(mats));
+      const n = (v: number | undefined): number => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+      const mats = n(grant.mats);
       const materials = { ...game.materials };
-      if (add > 0) for (const id of Object.keys(game.companions)) materials[id] = (materials[id] ?? 0) + add;
-      game = { ...game, gold: game.gold + Math.max(0, Math.floor(gold)), tickets: game.tickets + Math.max(0, Math.floor(tickets)), materials };
+      if (mats > 0) for (const id of Object.keys(game.companions)) materials[id] = (materials[id] ?? 0) + mats;
+      game = { ...game, gold: game.gold + n(grant.gold), tickets: game.tickets + n(grant.tickets), premiumTickets: game.premiumTickets + n(grant.premiumTickets), materials };
       log.debugUsed = true;
-      mark(`デバッグ: おひねり +${gold}、チケット +${tickets}、相棒の素材 +${add}`);
+      mark(`デバッグ: おひねり +${n(grant.gold)}、通常チケット +${n(grant.tickets)}、高級チケット +${n(grant.premiumTickets)}、相棒の素材 +${mats}`);
       save();
     },
     debugReset: () => {
@@ -467,13 +530,22 @@ export function createSession(deps: SessionDeps, content: Content): Session {
 /** プレイの記録を、人が読める行にする（ログの書き出し用）。 */
 export function playLogLines(log: PlayLog, game: GameData, content: Content): string[] {
   const lines: string[] = [];
+  const p = content.params;
   const minutes = log.activeMs / 60_000;
   const actions = Object.values(log.counts).reduce((a, b) => a + b, 0);
   const next = nextStage(game, content);
+  const rarityOf = (id: string): string => p.recruit.rarities[content.byId[id]?.rarity ?? ""]?.label ?? "";
   lines.push(`遊んだ時間: ${minutes.toFixed(1)}分（起動 ${log.opens}回）`);
-  lines.push(`次の面: ${next === null ? "すべて突破" : stageLabel(next, content.params)}（突破 ${game.highestCleared}面）`);
+  lines.push(`次の面: ${next === null ? "すべて突破" : stageLabel(next, p)}（突破 ${game.highestCleared}面）`);
   lines.push(`団員: ${ownedCount(game)}人 ／ 相棒: ${Object.keys(game.companions).length}体 ／ 戦闘 ${game.stats.battles}回（負け ${game.stats.defeats}回）`);
-  lines.push(`勧誘 ${game.counters.recruits}回 ／ レベル上げ 合計 ${game.counters.levelUps} ／ 昇格 ${game.counters.promotes}回 ／ 箱の受け取り ${game.counters.idleClaims}回 ／ ミッション ${game.missionsClaimed.length}件`);
+  lines.push(
+    `勧誘 ${game.counters.recruits}回 ／ レベル上げ 合計 ${game.counters.levelUps} ／ リセット ${game.counters.resets}回 ／ 昇格 ${game.counters.promotes}回 ／ ` +
+      `装備の強化 ${game.counters.enhances}回 ／ 箱の受け取り ${game.counters.idleClaims}回 ／ ミッション ${game.missionsClaimed.length}件`,
+  );
+  lines.push(
+    `編成: ${game.party.map((id) => (id === null ? "空き" : `${content.byId[id]?.name ?? id}（${rarityOf(id)}、Lv${game.members[id]?.level ?? 0}）`)).join("、")}`,
+  );
+  lines.push(`装備: 持っている ${game.equips.length}こ、編成が付けている ${equippedCount(game)}か所`);
   lines.push(`操作: 合計 ${actions}回（1分あたり ${minutes > 0 ? (actions / minutes).toFixed(1) : "-"}回）`);
   lines.push(`操作の内訳: ${Object.entries(log.counts).map(([k, v]) => `${k} ${v}`).join("、") || "なし"}`);
   lines.push(`デバッグ機能の使用: ${log.debugUsed ? "あり（この記録は採点に使わない）" : "なし"}`);

@@ -1,4 +1,4 @@
-// 各画面の中身（HTML の文字列）を作る（第2版）。ルールは持たず、core が返した値を並べるだけ。
+// 各画面の中身（HTML の文字列）を作る（第3版）。ルールは持たず、core が返した値を並べるだけ。
 // 文字列を返すだけなので、ブラウザがなくてもテストできる。
 //
 // 押せる要素には data-action を付ける（main.ts がまとめて受ける）。
@@ -7,26 +7,51 @@
 // （HTML ごと描き直すと、押している途中のボタンが作り直されて、押し損ねるため）。
 
 import {
-  PARTY_SIZE,
+  FRONT_SIZE,
   allCleared,
   battleStats,
+  canAutoEquipParty,
   companionLevelInfo,
   dailyList,
+  enhanceInfo,
+  equippedOn,
   idlePending,
-  levelUpInfo,
+  levelPlan,
+  maxAffordableLevel,
+  memberPowerNow,
   missionList,
   nextGoals,
   nextStage,
   ownedCount,
   partyPower,
   passiveMult,
+  pityLeft,
   promoteInfo,
+  recruitRarityRates,
   recruitRates,
+  resetInfo,
 } from "../core/game.ts";
-import type { GameData, GoalView, RewardAmounts } from "../core/game.ts";
-import { chapterOf, companionSkillPower, idleGoldPerMin, isBossStage, levelCap, maxStar, memberPower, stageLabel } from "../core/params.ts";
-import type { CompanionDef, Content, DailyDef, MemberDef, MissionDef } from "../core/params.ts";
-import { ROLE_LABEL, TRAIT_LABEL, TRAIT_TEXT, companionSkillText, escapeHtml, formatDuration, formatNumber, passiveText, rewardText, skillText } from "./texts.ts";
+import type { GameData, GoalView, OwnedEquip, RecruitOutcome, RewardAmounts } from "../core/game.ts";
+import { EQUIP_SLOTS, chapterOf, companionSkillPower, equipBonus, equipLevelCap, idleGoldPerMin, isBossStage, levelCap, maxPlus, stageLabel } from "../core/params.ts";
+import type { BannerId, CompanionDef, Content, DailyDef, EquipSlot, MemberDef, MissionDef } from "../core/params.ts";
+import {
+  ROLE_LABEL,
+  SLOT_LABEL,
+  TRAIT_LABEL,
+  TRAIT_TEXT,
+  companionSkillText,
+  equipEffectText,
+  equipName,
+  escapeHtml,
+  formatDuration,
+  formatNumber,
+  passiveText,
+  plusText,
+  rarityText,
+  rewardText,
+  skillText,
+  starsText,
+} from "./texts.ts";
 
 export type Tab = "journey" | "members" | "party" | "companions" | "recruit" | "missions" | "other";
 
@@ -42,8 +67,21 @@ export const TABS: { id: Tab; label: string }[] = [
 
 /** 直前の挑戦の結果（旅の画面に出す）。 */
 export type LastResult =
-  | { type: "win"; stage: number; reward: RewardAmounts; companionId: string | null }
+  | { type: "win"; stage: number; reward: RewardAmounts; equipDefId: string | null; companionId: string | null }
   | { type: "defeat"; stage: number; timedOut: boolean };
+
+/** 団員の詳細（ポップアップ）の、いまの表示。 */
+export interface DetailState {
+  id: string;
+  /** main = くわしい能力、level = レベルを指定、slot = 装備を選ぶ。 */
+  view: "main" | "level" | "slot";
+  /** 装備を選んでいる場所（view が slot のとき）。 */
+  slot: EquipSlot | null;
+  /** 指定している目標のレベル（view が level のとき）。 */
+  target: number;
+  /** リセットのボタンを1回押して、確かめを待っている。 */
+  resetArmed: boolean;
+}
 
 /** 画面だけが持つ状態（セーブには入らない）。 */
 export interface UiState {
@@ -52,6 +90,8 @@ export interface UiState {
   selectedSlot: number | null;
   /** 直前の挑戦の結果（まだなければ null）。 */
   result: LastResult | null;
+  /** 開いている団員の詳細（開いていなければ null）。 */
+  detail: DetailState | null;
   /** 最近の出来事（新しいものが先頭）。 */
   feed: string[];
   buildId: string;
@@ -65,26 +105,31 @@ export interface UiState {
   exportText: string;
 }
 
-const FRONT = PARTY_SIZE / 2;
 /** 箱に、これだけの時間ぶん貯まったら、旅のタブに印を付ける。 */
 const BOX_BADGE_MS = 5 * 60_000;
-
-function stars(n: number): string {
-  return n > 0 ? "★".repeat(n) : "";
-}
 
 function tags(def: MemberDef): string {
   const trait = def.trait ? `<span class="tag tag-trait">${TRAIT_LABEL[def.trait]}</span>` : "";
   return `<span class="tag">${ROLE_LABEL[def.role]}</span>${trait}`;
 }
 
+/** 団員の名前（昇格の「+2」つき）と、レア度。 */
+function nameHtml(def: MemberDef, plus: number, ctx: Content): string {
+  const r = ctx.params.recruit.rarities[def.rarity];
+  const cls = r ? `rar rar-${r.stars}${r.elite ? " rar-elite" : ""}` : "rar";
+  const p = plusText(plus);
+  return `${escapeHtml(def.name)}${p ? ` <span class="plus">${p}</span>` : ""} <small class="${cls}">${rarityText(def, ctx.params)}</small>`;
+}
+
 interface OwnedRow {
   def: MemberDef;
   level: number;
-  star: number;
+  plus: number;
   shards: number;
   inParty: boolean;
   power: number;
+  stars: number;
+  elite: boolean;
 }
 
 function owned(g: GameData, ctx: Content): OwnedRow[] {
@@ -92,13 +137,25 @@ function owned(g: GameData, ctx: Content): OwnedRow[] {
   for (const def of ctx.members) {
     const own = g.members[def.id];
     if (!own) continue;
-    list.push({ def, level: own.level, star: own.star, shards: own.shards, inParty: g.party.includes(def.id), power: memberPower(def, own.level, own.star, ctx.params) });
+    const r = ctx.params.recruit.rarities[def.rarity];
+    list.push({
+      def,
+      level: own.level,
+      plus: own.plus,
+      shards: own.shards,
+      inParty: g.party.includes(def.id),
+      power: memberPowerNow(g, def.id, ctx),
+      stars: r?.stars ?? 0,
+      elite: r?.elite === true,
+    });
   }
-  // 編成中の団員を先に、その中では編成の並び順に
+  // 編成中の団員を先に（編成の並び順）。控えは、レア度の高い順、その中ではレベルの高い順
   return list.sort((a, b) => {
     if (a.inParty !== b.inParty) return a.inParty ? -1 : 1;
     if (a.inParty) return g.party.indexOf(a.def.id) - g.party.indexOf(b.def.id);
-    return b.power - a.power;
+    if (a.stars !== b.stars) return b.stars - a.stars;
+    if (a.elite !== b.elite) return a.elite ? -1 : 1;
+    return b.level - a.level;
   });
 }
 
@@ -107,7 +164,7 @@ function partyIds(g: GameData): string[] {
 }
 
 function canTrainParty(g: GameData, ctx: Content): boolean {
-  return partyIds(g).some((id) => levelUpInfo(g, id, ctx).ok);
+  return partyIds(g).some((id) => levelPlan(g, id, (g.members[id]?.level ?? 0) + 1, ctx).ok);
 }
 
 function claimableCount(g: GameData, ctx: Content): number {
@@ -123,10 +180,10 @@ export function badges(g: GameData, ctx: Content, nowMs: number): Record<Tab, bo
   const pending = idlePending(g, nowMs, ctx);
   return {
     journey: pending.capped || pending.elapsedMs >= BOX_BADGE_MS,
-    members: ids.some((id) => levelUpInfo(g, id, ctx).ok || promoteInfo(g, id, ctx).ok),
+    members: canTrainParty(g, ctx) || ids.some((id) => promoteInfo(g, id, ctx).ok) || canAutoEquipParty(g, ctx),
     party: g.party.includes(null) && hasBench,
     companions: companionWaiting || companionIds.some((id) => companionLevelInfo(g, id, ctx).ok),
-    recruit: g.tickets > 0,
+    recruit: g.tickets > 0 || g.premiumTickets >= 10,
     missions: claimableCount(g, ctx) > 0,
     other: false,
   };
@@ -136,9 +193,11 @@ export function badges(g: GameData, ctx: Content, nowMs: number): Record<Tab, bo
 export function hintText(g: GameData, ctx: Content, nowMs: number): string {
   const b = badges(g, ctx, nowMs);
   if (b.missions) return "達成したミッションがあります。下の「ミッション」で、報酬を受け取れます。";
+  if (g.premiumTickets >= 10) return "高級チケットが10枚あります。下の「勧誘」で、10連を回せます。";
   if (b.recruit) return "勧誘チケットがあります。下の「勧誘」で、新しい団員を呼べます。";
   if (b.party) return "編成に空きがあります。下の「編成」で、団員を入れましょう。";
   if (g.companionSlot === null && Object.keys(g.companions).length > 0) return "相棒がいます。下の「相棒」で、編成に入れましょう。";
+  if (canAutoEquipParty(g, ctx)) return "新しい装備があります。下の「団員」の「おまかせ装備」で、まとめて付けられます。";
   if (canTrainParty(g, ctx)) return "おひねりがあります。下の「団員」で、稽古（レベル上げ）ができます。";
   if (b.companions) return "相棒を育てられます。下の「相棒」で、レベルを上げましょう。";
   if (b.journey) return "箱に、おひねりが貯まっています。受け取って、団員の稽古に使いましょう。";
@@ -165,9 +224,11 @@ function challengeHtml(g: GameData, ctx: Content, ui: UiState): string {
   let winHtml = "";
   if (r !== null && r.type === "win") {
     const companion = r.companionId !== null ? ` ${escapeHtml(ctx.companionById[r.companionId]?.name ?? "")} が相棒になりました！` : "";
+    const equip = r.equipDefId !== null ? ctx.equipById[r.equipDefId] : undefined;
+    const equipText = equip ? `、装備「${escapeHtml(equipName(equip, 0))}」` : "";
     winHtml =
       `<div class="result result-win" data-testid="result-win"><b>${stageLabel(r.stage, p)} を突破！${companion}</b>` +
-      `<span class="mini">初クリア報酬: ${escapeHtml(rewardText(r.reward))}</span></div>`;
+      `<span class="mini">初クリア報酬: ${escapeHtml(rewardText(r.reward))}${equipText}</span></div>`;
   }
   if (next === null) {
     parts.push(`<div class="status" data-testid="status-text">すべての面を突破しました。おひねりは、これからも箱に貯まります。</div>`);
@@ -205,7 +266,7 @@ function boxHtml(g: GameData, ctx: Content, nowMs: number): string {
     `<div class="box ${pending.capped ? "box-full" : ""}" data-testid="idle-box">` +
     `<div class="box-main">` +
     `<div class="box-title">箱（放置報酬）${pending.capped ? `<span class="tag tag-warn" data-testid="idle-capped">いっぱい</span>` : ""}</div>` +
-    `<div class="box-amounts"><span>おひねり <b data-live="idleGold" data-testid="idle-gold"></b></span>${mats}</div>` +
+    `<div class="box-amounts"><span>おひねり <b data-live="idleGold" data-testid="idle-gold"></b></span><span>装備 <b data-live="idleEquips" data-testid="idle-equips"></b></span>${mats}</div>` +
     `<div class="box-bar"><div class="box-fill" data-live-width="idleFill"></div></div>` +
     `<div class="mini">毎分 +${formatNumber(idleGoldPerMin(g.highestCleared, p))} ・ <span data-live="idleTime"></span></div>` +
     `</div>` +
@@ -220,6 +281,7 @@ export function journeyLive(g: GameData, ctx: Content, nowMs: number): Record<st
   const capMs = ctx.params.economy.idleCapHours * 3_600_000;
   const out: Record<string, string> = {
     idleGold: formatNumber(pending.gold),
+    idleEquips: String(pending.equips),
     idleFill: `${Math.round(Math.min(1, pending.elapsedMs / capMs) * 1000) / 10}%`,
     idleTime: pending.capped ? `いっぱい（${ctx.params.economy.idleCapHours}時間ぶん）` : `${formatDuration(pending.elapsedMs)}ぶん ／ ${ctx.params.economy.idleCapHours}時間まで`,
   };
@@ -257,6 +319,12 @@ function goalsHtml(g: GameData, ctx: Content): string {
       `<button type="button" class="goal ${canClaim ? "goal-ready" : ""}" data-action="tab" data-tab="missions" data-testid="goal-daily"><span>今日の日課</span><span class="goal-go">${canClaim ? "受け取れます ›" : `${done} / ${dailies.length}`}</span></button>`,
     );
   }
+  const left = pityLeft(g, "premium", ctx);
+  if (left !== null && g.recruit.firstTenDone) {
+    items.push(
+      `<button type="button" class="goal" data-action="tab" data-tab="recruit" data-testid="goal-pity"><span>高級勧誘の ★3 確定まで</span><span class="goal-go">あと ${left}回</span></button>`,
+    );
+  }
   return items.length > 0 ? `<div class="goals">${items.join("")}</div>` : "";
 }
 
@@ -275,75 +343,182 @@ export function journeyInfoHtml(g: GameData, ctx: Content, ui: UiState, nowMs: n
 
 // ---------------------------------------------------------------- 団員
 
+/** 「+10」で上がる先のレベル（上限が近ければ、上限まで）。 */
+function plusTenTarget(level: number, cap: number): number {
+  return Math.min(level + 10, cap);
+}
+
+function equippedSlots(g: GameData, id: string, ctx: Content): number {
+  const on = equippedOn(g, id, ctx);
+  return EQUIP_SLOTS.filter((s) => on[s] !== null).length;
+}
+
 export function membersHtml(g: GameData, ctx: Content): string {
   const p = ctx.params;
   const rows = owned(g, ctx).map((m) => {
     const id = m.def.id;
-    const info = levelUpInfo(g, id, ctx);
-    const promo = promoteInfo(g, id, ctx);
-    const cap = levelCap(m.star, p);
+    const cap = levelCap(m.def, m.plus, p);
     const capped = m.level >= cap;
-    const atMaxStar = m.star >= maxStar(p);
-    const one = capped
-      ? `<button type="button" class="btn" disabled data-testid="levelup-${id}">上限</button>`
-      : `<button type="button" class="btn ${info.ok ? "btn-primary" : ""}" data-action="levelup" data-id="${id}" data-testid="levelup-${id}" ${info.ok ? "" : "disabled"}>稽古 <small>${formatNumber(info.cost)}</small></button>`;
-    const max = `<button type="button" class="btn" data-action="levelmax" data-id="${id}" data-testid="levelmax-${id}" ${info.ok ? "" : "disabled"}>まとめて</button>`;
+    const one = levelPlan(g, id, m.level + 1, ctx);
+    const tenTarget = plusTenTarget(m.level, cap);
+    const ten = levelPlan(g, id, tenTarget, ctx);
+    const promo = promoteInfo(g, id, ctx);
+    const atMaxPlus = m.plus >= maxPlus(p);
+    const lv = (label: string, action: string, n: string, testid: string, plan: { ok: boolean; cost: number }, primary: boolean): string =>
+      `<button type="button" class="btn lv-btn ${plan.ok && primary ? "btn-primary" : ""}" data-action="${action}" data-id="${id}" data-n="${n}" data-testid="${testid}-${id}" ${plan.ok ? "" : "disabled"}>` +
+      `<span>${label}</span><small>${capped ? "上限" : formatNumber(plan.cost)}</small></button>`;
+    const buttons =
+      lv("+1", "levelup", "1", "levelup", one, true) +
+      lv(capped ? "+10" : `+${tenTarget - m.level}`, "levelup", "10", "levelten", ten, false) +
+      `<button type="button" class="btn lv-btn" data-action="level-open" data-id="${id}" data-testid="levelset-${id}" ${one.ok ? "" : "disabled"}><span>指定</span><small>レベル</small></button>`;
     const promote = promo.ok
-      ? `<button type="button" class="btn btn-promote" data-action="promote" data-id="${id}" data-testid="promote-${id}">昇格できます（★+1）</button>`
+      ? `<button type="button" class="btn btn-promote" data-action="promote" data-id="${id}" data-testid="promote-${id}">昇格できます（+${m.plus + 1}）</button>`
       : "";
-    const shards = atMaxStar ? "" : ` ／ かけら ${m.shards}/${promo.need}`;
+    const shards = atMaxPlus ? "" : `<span class="chunk">かけら ${m.shards}/${promo.need}</span>`;
     return (
       `<li class="member ${m.inParty ? "in-party" : ""}" data-testid="member-row-${id}">` +
       `<button type="button" class="member-main" data-action="detail" data-id="${id}" data-testid="detail-${id}">` +
-      `<span class="member-name">${escapeHtml(m.def.name)} <small>${stars(m.star)}</small></span>` +
+      `<span class="member-name">${nameHtml(m.def, m.plus, ctx)}</span>` +
       `<span class="member-sub">${tags(m.def)}${m.inParty ? `<span class="tag tag-in">編成中</span>` : ""}</span>` +
-      `<span class="member-sub">Lv <b data-testid="member-level-${id}">${m.level}</b> / ${cap}${shards}</span>` +
+      `<span class="member-sub member-facts"><span class="chunk">Lv <b data-testid="member-level-${id}">${m.level}</b> / ${cap}</span>${shards}<span class="chunk">装備 ${equippedSlots(g, id, ctx)}/4</span></span>` +
       `</button>` +
-      `<div class="member-btns">${one}${max}${promote}</div>` +
+      `<div class="member-btns">${buttons}${promote}</div>` +
       `</li>`
     );
   });
-  const can = canTrainParty(g, ctx);
+  const canGear = canAutoEquipParty(g, ctx);
+  const free = g.equips.filter((e) => e.on === null).length;
   return (
-    `<h2 class="panel-title">団員（${ownedCount(g)}人）</h2>` +
+    `<h2 class="panel-title">団員（${ownedCount(g)} / ${ctx.members.length}人）</h2>` +
     `<div class="train-box">` +
-    `<button type="button" class="btn ${can ? "btn-primary" : ""} btn-big" data-action="train-party" data-testid="train-party" ${can ? "" : "disabled"}>編成をまとめて稽古</button>` +
-    `<p class="mini">編成の団員を、レベルの低い順に、おひねりが続くかぎり上げます。おひねり: <b data-testid="members-gold">${formatNumber(g.gold)}</b></p>` +
+    `<div class="row-between"><span>おひねり <b data-testid="members-gold">${formatNumber(g.gold)}</b></span><span class="mini">付けていない装備 ${free}こ</span></div>` +
+    `<button type="button" class="btn ${canGear ? "btn-primary" : ""} btn-wide" data-action="auto-equip-party" data-testid="auto-equip-party" ${canGear ? "" : "disabled"}>編成の全員に、おまかせ装備</button>` +
     `</div>` +
-    `<p class="panel-note">「稽古」は1つ、「まとめて」はその団員を上げられるだけ上げます。名前を押すと、くわしい能力が見られます。</p>` +
+    `<p class="panel-note">「+1」「+10」でレベルを上げます。「指定」は、どこまで上げるかを決められます。名前を押すと、リセット・昇格・装備が開きます。</p>` +
     `<ul class="member-list">${rows.join("")}</ul>`
   );
 }
 
-export function memberDetailHtml(g: GameData, ctx: Content, id: string): string {
+function equipRowHtml(g: GameData, ctx: Content, slot: EquipSlot, item: OwnedEquip | null): string {
+  const def = item ? ctx.equipById[item.defId] : undefined;
+  const body =
+    item && def
+      ? `<span class="eq-name">${escapeHtml(equipName(def, item.level))}</span><small>${equipEffectText(def, item.level, ctx.params)}</small>`
+      : `<span class="eq-name empty">なし</span><small>押して選ぶ</small>`;
+  let enhance = `<button type="button" class="btn lv-btn" disabled data-testid="enhance-${slot}"><span>強化</span><small>-</small></button>`;
+  if (item && def) {
+    const info = enhanceInfo(g, item.uid, ctx);
+    const capped = item.level >= equipLevelCap(def, ctx.params);
+    enhance =
+      `<button type="button" class="btn lv-btn ${info.ok ? "btn-primary" : ""}" data-action="enhance" data-uid="${item.uid}" data-testid="enhance-${slot}" ${info.ok ? "" : "disabled"}>` +
+      `<span>強化</span><small>${capped ? "上限" : formatNumber(info.gold)}</small></button>`;
+  }
+  return (
+    `<div class="eq-row" data-testid="eq-${slot}">` +
+    `<button type="button" class="eq-main" data-action="slot-open" data-slot="${slot}" data-testid="slot-open-${slot}"><span class="eq-slot">${SLOT_LABEL[slot]}</span>${body}</button>` +
+    enhance +
+    `</div>`
+  );
+}
+
+/** 団員の詳細（ポップアップ）。くわしい能力、レベルの指定、装備の選択の3つの表示を持つ。 */
+export function memberModalHtml(g: GameData, ctx: Content, detail: DetailState): string {
+  const id = detail.id;
   const def = ctx.byId[id];
   const own = g.members[id];
   const s = battleStats(g, id, ctx);
   if (!def || !own || !s) return "";
   const p = ctx.params;
+  const cap = levelCap(def, own.plus, p);
+  const title = `<h2 data-testid="detail-title">${nameHtml(def, own.plus, ctx)}</h2>`;
+
+  if (detail.view === "level") {
+    const max = maxAffordableLevel(g, id, ctx);
+    const target = Math.max(own.level + 1, Math.min(detail.target, Math.max(max, own.level + 1)));
+    const plan = levelPlan(g, id, target, ctx);
+    const step = (d: number, label: string): string => {
+      const next = target + d;
+      const ok = next > own.level && next <= max;
+      return `<button type="button" class="btn" data-action="level-step" data-d="${d}" data-testid="level-step-${d > 0 ? "p" : "m"}${Math.abs(d)}" ${ok ? "" : "disabled"}>${label}</button>`;
+    };
+    return (
+      title +
+      `<p class="member-sub">レベルを指定（いま Lv ${own.level} ／ 上限 ${cap}）</p>` +
+      `<div class="level-target">Lv <b data-testid="level-target">${target}</b></div>` +
+      `<div class="btn-row level-steps">${step(-10, "−10")}${step(-1, "−1")}${step(1, "+1")}${step(10, "+10")}</div>` +
+      `<button type="button" class="btn btn-wide" data-action="level-max" data-testid="level-max" ${max > own.level && target !== max ? "" : "disabled"}>上げられるところまで（Lv ${Math.max(max, own.level)}）</button>` +
+      `<dl class="stats">` +
+      `<div><dt>要るおひねり</dt><dd data-testid="level-cost">${formatNumber(plan.cost)}</dd></div>` +
+      `<div><dt>持っているおひねり</dt><dd>${formatNumber(g.gold)}</dd></div>` +
+      `</dl>` +
+      (plan.ok ? "" : `<p class="mini">${escapeHtml(plan.reason ?? "")}</p>`) +
+      `<button type="button" class="btn btn-primary btn-wide" data-action="level-confirm" data-testid="level-confirm" ${plan.ok ? "" : "disabled"}>Lv ${target} まで上げる</button>` +
+      `<button type="button" class="btn btn-wide" data-action="detail-back" data-testid="detail-back">戻る</button>`
+    );
+  }
+
+  if (detail.view === "slot" && detail.slot !== null) {
+    const slot = detail.slot;
+    const items = g.equips
+      .filter((e) => ctx.equipById[e.defId]?.slot === slot)
+      .map((e) => ({ e, def: ctx.equipById[e.defId] as NonNullable<(typeof ctx.equipById)[string]> }))
+      .sort((a, b) => equipBonus(b.def, b.e.level, p) - equipBonus(a.def, a.e.level, p) || a.e.uid - b.e.uid);
+    const rows = items.slice(0, 40).map(({ e, def: d }) => {
+      const mine = e.on === id;
+      const other = e.on !== null && !mine ? `<small>${escapeHtml(ctx.byId[e.on]?.name ?? "")} が装備中</small>` : "";
+      const button = mine
+        ? `<button type="button" class="btn" data-action="unequip" data-uid="${e.uid}" data-testid="unequip-${e.uid}">外す</button>`
+        : `<button type="button" class="btn btn-primary" data-action="equip" data-uid="${e.uid}" data-testid="equip-${e.uid}">${e.on !== null ? "移す" : "付ける"}</button>`;
+      return (
+        `<li class="eq-item ${mine ? "is-mine" : ""}"><span class="task-text">${escapeHtml(equipName(d, e.level))}` +
+        `<small>${equipEffectText(d, e.level, p)}${mine ? "（付けている）" : ""}</small>${other}</span>${button}</li>`
+      );
+    });
+    return (
+      title +
+      `<p class="member-sub">${SLOT_LABEL[slot]}を選ぶ（効果の高い順）</p>` +
+      (rows.length > 0 ? `<ul class="task-list" data-testid="slot-list">${rows.join("")}</ul>` : `<p class="mini" data-testid="slot-list">この場所の装備を、まだ持っていません。面を初めて突破するか、箱から手に入ります。</p>`) +
+      `<button type="button" class="btn btn-wide" data-action="detail-back" data-testid="detail-back">戻る</button>`
+    );
+  }
+
   const promo = promoteInfo(g, id, ctx);
-  const atMax = own.star >= maxStar(p);
+  const atMax = own.plus >= maxPlus(p);
   const boost = passiveMult(g, ctx);
   const boosted = boost.hp > 1 || boost.atk > 1;
-  const rarity = p.recruit.rarities[def.rarity]?.label ?? "";
+  const reset = resetInfo(g, id, ctx);
+  const on = equippedOn(g, id, ctx);
+  const one = levelPlan(g, id, own.level + 1, ctx);
   const promoteRow = atMax
     ? `<p class="mini">これ以上は昇格できません。</p>`
     : `<div class="row-between"><span>かけら <b data-testid="detail-shards">${own.shards}</b> / ${promo.need}</span>` +
-      `<button type="button" class="btn ${promo.ok ? "btn-primary" : ""}" data-action="promote" data-id="${id}" data-testid="promote-button" ${promo.ok ? "" : "disabled"}>昇格（★+1）</button></div>` +
+      `<button type="button" class="btn ${promo.ok ? "btn-primary" : ""}" data-action="promote" data-id="${id}" data-testid="promote-button" ${promo.ok ? "" : "disabled"}>昇格（+${own.plus + 1}）</button></div>` +
       `<p class="mini">同じ団員が勧誘で重なると、かけらになります。昇格すると能力が上がり、レベルの上限が伸びます。</p>`;
+  const resetButton = detail.resetArmed
+    ? `<button type="button" class="btn btn-danger" data-action="reset-confirm" data-testid="reset-confirm">もう一度押すと、Lv1 に戻します</button>`
+    : `<button type="button" class="btn" data-action="reset" data-testid="reset-button" ${reset.ok ? "" : "disabled"}>リセット${reset.ok ? `（+${formatNumber(reset.refund)}）` : ""}</button>`;
   return (
-    `<h2>${escapeHtml(def.name)} <small>${stars(own.star)}</small></h2>` +
-    `<p class="member-sub">${tags(def)}${rarity ? `<span class="tag">レア度: ${escapeHtml(rarity)}</span>` : ""}</p>` +
+    title +
+    `<p class="member-sub">${tags(def)}</p>` +
     `<dl class="stats">` +
-    `<div><dt>レベル</dt><dd>${own.level} / ${levelCap(own.star, p)}</dd></div>` +
-    `<div><dt>体力</dt><dd>${formatNumber(s.hp)}</dd></div>` +
-    `<div><dt>攻撃</dt><dd>${formatNumber(s.atk)}</dd></div>` +
+    `<div><dt>レベル</dt><dd><span data-testid="detail-level">${own.level}</span> / ${cap}</dd></div>` +
+    `<div><dt>体力</dt><dd data-testid="detail-hp">${formatNumber(s.hp)}</dd></div>` +
+    `<div><dt>攻撃</dt><dd data-testid="detail-atk">${formatNumber(s.atk)}</dd></div>` +
     `<div><dt>攻撃の間隔</dt><dd>${def.interval}秒</dd></div>` +
     `</dl>` +
-    (boosted ? `<p class="mini">体力と攻撃は、相棒による底上げを含みます。</p>` : "") +
+    `<p class="mini">体力と攻撃は、装備${boosted ? "と相棒の底上げ" : ""}を含みます。</p>` +
     `<p><b>技:</b> ${escapeHtml(skillText(def.skill, p.battle.rallySec))}</p>` +
     (def.trait ? `<p><b>${TRAIT_LABEL[def.trait]}:</b> ${TRAIT_TEXT[def.trait]}</p>` : "") +
+    `<div class="btn-row detail-actions">` +
+    `<button type="button" class="btn ${one.ok ? "btn-primary" : ""}" data-action="level-open" data-id="${id}" data-testid="level-open" ${one.ok ? "" : "disabled"}>レベルを指定</button>` +
+    resetButton +
+    `</div>` +
+    `<p class="mini">リセットすると、レベル1に戻り、レベル上げに使ったおひねりが全部戻ります。昇格と装備は、そのままです。</p>` +
     promoteRow +
+    `<h3>装備</h3>` +
+    EQUIP_SLOTS.map((slot) => equipRowHtml(g, ctx, slot, on[slot])).join("") +
+    `<button type="button" class="btn btn-wide" data-action="auto-equip" data-id="${id}" data-testid="auto-equip">おまかせ装備</button>` +
+    `<p class="mini">だれも付けていない装備の中から、場所ごとに、いちばん良いものを付けます。</p>` +
     `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
   );
 }
@@ -356,7 +531,10 @@ export function partyHtml(g: GameData, ctx: Content, ui: UiState): string {
     const def = id === null ? undefined : ctx.byId[id];
     const own = id === null ? undefined : g.members[id];
     const selected = ui.selectedSlot === i ? "selected" : "";
-    const body = def && own ? `<b>${escapeHtml(def.name)}</b><small>Lv ${own.level} ${ROLE_LABEL[def.role]}</small>` : `<b class="empty">空き</b><small>押して選ぶ</small>`;
+    const body =
+      def && own
+        ? `<b>${escapeHtml(def.name)}</b><small>${starsText(ctx.params.recruit.rarities[def.rarity]?.stars ?? 0)} Lv ${own.level}</small><small>${ROLE_LABEL[def.role]}</small>`
+        : `<b class="empty">空き</b><small>押して選ぶ</small>`;
     return `<button type="button" class="slot ${selected}" data-action="slot" data-slot="${i}" data-testid="slot-${i}">${body}</button>`;
   };
   const sel = ui.selectedSlot;
@@ -365,14 +543,14 @@ export function partyHtml(g: GameData, ctx: Content, ui: UiState): string {
   const guide =
     sel === null
       ? "① 入れ替えたい枠を押してください。"
-      : `② ${sel < FRONT ? "前列" : "後列"}の${(sel % FRONT) + 1}番に入れる団員を、下から選んでください。`;
+      : `② ${sel < FRONT_SIZE ? "前列" : "後列"}の${(sel % FRONT_SIZE) + 1}番に入れる団員を、下から選んでください。`;
   const rows = owned(g, ctx).map((m) => {
     const where = g.party.indexOf(m.def.id);
-    const place = where >= 0 ? `${where < FRONT ? "前列" : "後列"}${(where % FRONT) + 1}` : "控え";
+    const place = where >= 0 ? `${where < FRONT_SIZE ? "前列" : "後列"}${(where % FRONT_SIZE) + 1}` : "控え";
     return (
       `<li class="member ${m.inParty ? "in-party" : ""}">` +
       `<span class="member-main static">` +
-      `<span class="member-name">${escapeHtml(m.def.name)} <small>${stars(m.star)}</small></span>` +
+      `<span class="member-name">${nameHtml(m.def, m.plus, ctx)}</span>` +
       `<span class="member-sub">${tags(m.def)}<span class="tag ${m.inParty ? "tag-in" : ""}">${place}</span></span>` +
       `<span class="member-sub">Lv ${m.level} ／ 戦力 ${formatNumber(m.power)}</span>` +
       `</span>` +
@@ -389,12 +567,14 @@ export function partyHtml(g: GameData, ctx: Content, ui: UiState): string {
       : companionIds.length > 0
         ? `<b class="empty">空き</b><small>押して、相棒を選ぶ</small>`
         : `<b class="empty">まだいません</b><small>ボスを倒すと相棒になる</small>`;
+  const front = Array.from({ length: FRONT_SIZE }, (_, i) => slot(i)).join("");
+  const back = Array.from({ length: FRONT_SIZE }, (_, i) => slot(FRONT_SIZE + i)).join("");
   return (
     `<h2 class="panel-title">編成（戦力 ${formatNumber(partyPower(g, ctx))}）</h2>` +
     `<p class="panel-note">敵は前列を先に狙います。体力の高い団員を前列に置くと、長く持ちます。</p>` +
     `<div class="formation">` +
-    `<div class="formation-row"><span class="row-label">前列</span>${slot(0)}${slot(1)}</div>` +
-    `<div class="formation-row"><span class="row-label">後列</span>${slot(2)}${slot(3)}</div>` +
+    `<div class="formation-row"><span class="row-label">前列</span>${front}</div>` +
+    `<div class="formation-row"><span class="row-label">後列</span>${back}</div>` +
     `<div class="formation-row"><span class="row-label">相棒</span><button type="button" class="slot slot-companion" data-action="tab" data-tab="companions" data-testid="slot-companion">${companionBody}</button></div>` +
     `</div>` +
     `<div class="row-between"><span class="guide-text" data-testid="party-guide">${guide}</span>` +
@@ -460,28 +640,83 @@ export function companionsHtml(g: GameData, ctx: Content): string {
 
 // ---------------------------------------------------------------- 勧誘
 
+function percent(rate: number): string {
+  return `${Math.round(rate * 1000) / 10}%`;
+}
+
+function bannerHtml(g: GameData, ctx: Content, bannerId: BannerId): string {
+  const p = ctx.params;
+  const banner = p.recruit.banners[bannerId];
+  const premium = bannerId === "premium";
+  const have = premium ? g.premiumTickets : g.tickets;
+  const rates = recruitRarityRates(ctx, bannerId)
+    .map((r) => `${escapeHtml(p.recruit.rarities[r.rarity]?.label ?? r.rarity)} ${percent(r.rate)}`)
+    .join("・");
+  const notes: string[] = [];
+  notes.push(banner.tenGuaranteeStars > 0 ? `10連で、${starsText(banner.tenGuaranteeStars)} 以上が1体かならず出ます。` : "10連の確定はありません。");
+  if (!recruitRarityRates(ctx, bannerId).some((r) => p.recruit.rarities[r.rarity]?.elite)) notes.push("エリートは出ません。");
+  const left = pityLeft(g, bannerId, ctx);
+  const pity = left !== null ? `<div class="pity">${starsText(banner.pityStars)} 確定まで あと <b data-testid="pity-left">${left}</b>回</div>` : "";
+  let first = "";
+  if (premium && !g.recruit.firstTenDone && p.recruit.firstPremiumTen.length > 0) {
+    const names = p.recruit.firstPremiumTen.map((id) => {
+      const def = ctx.byId[id];
+      return def ? `${ROLE_LABEL[def.role]}の ${escapeHtml(def.name)}（${rarityText(def, p)}）` : "";
+    });
+    first = `<p class="first-ten" data-testid="first-ten-note">最初の10連では、${names.join(" と、")} が必ず来ます。</p>`;
+  }
+  return (
+    `<div class="recruit-box ${premium ? "recruit-premium" : ""}" data-testid="banner-${bannerId}">` +
+    `<h3>${escapeHtml(banner.label)}</h3>` +
+    `<div>${premium ? "高級" : "通常"}チケット <b data-testid="${premium ? "premium-tickets" : "recruit-tickets"}">${have}</b> 枚</div>` +
+    first +
+    `<div class="btn-row recruit-btns">` +
+    `<button type="button" class="btn ${have >= 1 ? "btn-primary" : ""} btn-big" data-action="recruit" data-banner="${bannerId}" data-count="1" data-testid="recruit-${bannerId}-1" ${have >= 1 ? "" : "disabled"}>1回<small>1枚</small></button>` +
+    `<button type="button" class="btn ${have >= 10 ? "btn-primary" : ""} btn-big" data-action="recruit" data-banner="${bannerId}" data-count="10" data-testid="recruit-${bannerId}-10" ${have >= 10 ? "" : "disabled"}>10連<small>10枚</small></button>` +
+    `</div>` +
+    pity +
+    `<div class="mini">${rates}</div>` +
+    `<div class="mini">${notes.join(" ")}</div>` +
+    `<button type="button" class="btn" data-action="rates" data-banner="${bannerId}" data-testid="rates-${bannerId}">出る団員と割合を見る</button>` +
+    `</div>`
+  );
+}
+
 export function recruitHtml(g: GameData, ctx: Content): string {
-  const rarities = ctx.params.recruit.rarities;
-  const rates = recruitRates(ctx).map((r) => {
-    const def = ctx.byId[r.id] as MemberDef;
-    const own = g.members[r.id];
-    const rarity = rarities[def.rarity]?.label ?? "";
-    return `<li><span>${escapeHtml(def.name)} <small>${ROLE_LABEL[def.role]}・${escapeHtml(rarity)}</small></span><span>${(r.rate * 100).toFixed(1)}%${own ? ` <small>（在籍 ★${own.star}、かけら ${own.shards}）</small>` : ""}</span></li>`;
-  });
-  const first = g.counters.recruits === 0 ? `<p class="panel-note">はじめての勧誘では、回復役の ${escapeHtml(ctx.byId[ctx.params.recruit.firstId]?.name ?? "")} が必ず来ます。</p>` : "";
-  const many = Math.min(10, g.tickets);
   return (
     `<h2 class="panel-title">勧誘</h2>` +
-    `<div class="recruit-box">` +
-    `<div>勧誘チケット <b data-testid="recruit-tickets">${g.tickets}</b> 枚</div>` +
-    `<button type="button" class="btn btn-primary btn-big" data-action="recruit" data-testid="recruit-button" ${g.tickets > 0 ? "" : "disabled"}>勧誘する（1枚）</button>` +
-    `<button type="button" class="btn btn-big" data-action="recruit-all" data-testid="recruit-all" ${many >= 2 ? "" : "disabled"}>まとめて勧誘する（${Math.max(2, many)}枚）</button>` +
-    `<div class="mini">勧誘チケットは、ミッションと日課でもらえます。</div>` +
-    `</div>` +
-    first +
-    `<h3>来る団員と、その割合</h3>` +
-    `<ul class="rates" data-testid="recruit-rates">${rates.join("")}</ul>` +
-    `<p class="panel-note">すでにいる団員が来たときは、その団員の「かけら」になり、昇格（★）に使えます。新しい団員は、レベル1から始まります。</p>`
+    bannerHtml(g, ctx, "premium") +
+    bannerHtml(g, ctx, "normal") +
+    `<p class="panel-note">チケットは、ミッションと日課でもらえます。すでにいる団員が来たときは、その団員の「かけら」になり、昇格（+1）に使えます。新しい団員は、レベル1から始まります。</p>`
+  );
+}
+
+/** 勧誘から出る団員と、その割合（ポップアップ）。 */
+export function ratesHtml(g: GameData, ctx: Content, bannerId: BannerId): string {
+  const p = ctx.params;
+  const banner = p.recruit.banners[bannerId];
+  const per = recruitRates(ctx, bannerId);
+  const groups = recruitRarityRates(ctx, bannerId)
+    .slice()
+    .sort((a, b) => {
+      const ra = p.recruit.rarities[a.rarity];
+      const rb = p.recruit.rarities[b.rarity];
+      return (rb?.stars ?? 0) - (ra?.stars ?? 0) || Number(rb?.elite ?? false) - Number(ra?.elite ?? false);
+    })
+    .map((group) => {
+      const rows = ctx.members
+        .filter((m) => m.rarity === group.rarity)
+        .map((m) => {
+          const own = g.members[m.id];
+          const rate = per.find((x) => x.id === m.id)?.rate ?? 0;
+          return `<li><span>${escapeHtml(m.name)} <small>${ROLE_LABEL[m.role]}${own ? `・在籍${own.plus > 0 ? ` +${own.plus}` : ""}` : ""}</small></span><span>${(rate * 100).toFixed(2)}%</span></li>`;
+        });
+      return `<h3>${escapeHtml(p.recruit.rarities[group.rarity]?.label ?? group.rarity)}（合わせて ${percent(group.rate)}）</h3><ul class="rates">${rows.join("")}</ul>`;
+    });
+  return (
+    `<h2 data-testid="rates-title">${escapeHtml(banner.label)}から出る団員</h2>` +
+    groups.join("") +
+    `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
   );
 }
 
@@ -576,41 +811,25 @@ export function otherHtml(g: GameData, ctx: Content, ui: UiState, extraHtml: str
 
 // ---------------------------------------------------------------- ポップアップ
 
-export interface RecruitOutcome {
-  id: string;
-  duplicate: boolean;
-}
-
-function placeEmptyButton(g: GameData, id: string): string {
-  return g.party.includes(null) && !g.party.includes(id)
-    ? `<button type="button" class="btn btn-primary btn-wide" data-action="place-empty" data-id="${id}" data-testid="place-empty">編成の空きに入れる</button>`
-    : "";
-}
-
-export function recruitResultHtml(g: GameData, ctx: Content, id: string, duplicate: boolean): string {
-  const def = ctx.byId[id];
-  if (!def) return "";
-  const body = duplicate
-    ? `<p>${escapeHtml(def.name)} はすでにいるので、<b>かけら</b>を1つ手に入れました。</p>`
-    : `<p><b>${escapeHtml(def.name)}</b> が仲間になりました！</p><p class="member-sub">${tags(def)}</p><p class="mini">${escapeHtml(skillText(def.skill, ctx.params.battle.rallySec))}</p>`;
-  return (
-    `<h2 data-testid="recruit-result">${duplicate ? "かけらを入手" : "新しい団員"}</h2>${body}` +
-    (duplicate ? "" : placeEmptyButton(g, id)) +
-    `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
-  );
-}
-
-/** まとめて勧誘した結果。 */
-export function recruitManyHtml(g: GameData, ctx: Content, outcomes: RecruitOutcome[]): string {
+/** 勧誘の結果（1回でも10連でも、一覧で出す）。 */
+export function recruitResultHtml(g: GameData, ctx: Content, outcomes: RecruitOutcome[]): string {
+  const p = ctx.params;
   const rows = outcomes.map((o) => {
     const def = ctx.byId[o.id];
-    return `<li class="${o.duplicate ? "" : "is-new"}"><span>${escapeHtml(def?.name ?? "")}</span><span>${o.duplicate ? "かけら +1" : "新しい団員！"}</span></li>`;
+    if (!def) return "";
+    const r = p.recruit.rarities[def.rarity];
+    return (
+      `<li class="${o.duplicate ? "" : "is-new"} rar-row-${r?.stars ?? 0}${r?.elite ? " rar-row-elite" : ""}">` +
+      `<span>${escapeHtml(def.name)} <small class="rar rar-${r?.stars ?? 0}${r?.elite ? " rar-elite" : ""}">${rarityText(def, p)}</small> <small>${ROLE_LABEL[def.role]}</small></span>` +
+      `<span>${o.duplicate ? "かけら +1" : "新しい団員！"}</span></li>`
+    );
   });
-  const firstNew = outcomes.find((o) => !o.duplicate && !g.party.includes(o.id));
+  const fresh = outcomes.filter((o) => !o.duplicate).length;
+  const canFill = g.party.includes(null) && ownedCount(g) > g.party.filter((x) => x !== null).length;
   return (
-    `<h2 data-testid="recruit-many-result">勧誘の結果（${outcomes.length}回）</h2>` +
-    `<ul class="rates">${rows.join("")}</ul>` +
-    (firstNew ? placeEmptyButton(g, firstNew.id) : "") +
+    `<h2 data-testid="recruit-result">勧誘の結果（${outcomes.length}回、新しい団員 ${fresh}人）</h2>` +
+    `<ul class="rates" data-testid="recruit-result-list">${rows.join("")}</ul>` +
+    (canFill ? `<button type="button" class="btn btn-primary btn-wide" data-action="fill-empty" data-testid="fill-empty">編成の空きに入れる（レア度の高い順）</button>` : "") +
     `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
   );
 }

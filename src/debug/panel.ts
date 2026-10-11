@@ -5,8 +5,8 @@ export function debugPanelHtml(speed: number): string {
   const speeds = [1, 2, 5, 20]
     .map((v) => `<button type="button" class="btn ${speed === v ? "btn-primary" : ""}" data-action="dbg-speed" data-v="${v}" data-testid="dbg-speed-${v}">${v}倍</button>`)
     .join("");
-  const grant = (label: string, testid: string, gold: number, tickets: number, mats: number): string =>
-    `<button type="button" class="btn" data-action="dbg-grant" data-gold="${gold}" data-tickets="${tickets}" data-mats="${mats}" data-testid="${testid}">${label}</button>`;
+  const grant = (label: string, testid: string, gold: number, tickets: number, premium: number, mats: number): string =>
+    `<button type="button" class="btn" data-action="dbg-grant" data-gold="${gold}" data-tickets="${tickets}" data-premium="${premium}" data-mats="${mats}" data-testid="${testid}">${label}</button>`;
   return (
     `<div class="card debug" data-testid="debug-panel">` +
     `<h3>確認用の機能（公開用には入りません）</h3>` +
@@ -18,10 +18,11 @@ export function debugPanelHtml(speed: number): string {
     `<button type="button" class="btn" data-action="dbg-time" data-ms="36000000" data-testid="dbg-time-10h">10時間</button>` +
     `<button type="button" class="btn" data-action="dbg-time" data-ms="86400000" data-testid="dbg-time-1d">1日</button></div>` +
     `<div class="btn-row"><span>付与</span>` +
-    grant("おひねり+1000", "dbg-gold", 1000, 0, 0) +
-    grant("おひねり+100万", "dbg-gold-big", 1_000_000, 0, 0) +
-    grant("チケット+1", "dbg-ticket", 0, 1, 0) +
-    grant("相棒の素材+10", "dbg-mats", 0, 0, 10) +
+    grant("おひねり+1000", "dbg-gold", 1000, 0, 0, 0) +
+    grant("おひねり+100万", "dbg-gold-big", 1_000_000, 0, 0, 0) +
+    grant("通常チケット+10", "dbg-ticket", 0, 10, 0, 0) +
+    grant("高級チケット+10", "dbg-premium", 0, 0, 10, 0) +
+    grant("相棒の素材+10", "dbg-mats", 0, 0, 0, 10) +
     `</div>` +
     `<div class="btn-row"><span>ログ</span>` +
     `<button type="button" class="btn" data-action="dbg-log" data-testid="dbg-log">ログを書き出す</button></div>` +

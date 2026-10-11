@@ -1,51 +1,137 @@
 {
-  "battle": {
-    "timeLimitSec": 60,
-    "gaugeMax": 100,
-    "gaugePerAttack": 34,
-    "damageVariance": 0.06,
-    "rallySec": 8,
-    "introSec": 2.5,
-    "resultSec": 2
-  },
-  "member": {
-    "baseHp": 120,
-    "baseAtk": 12,
-    "levelGrowth": 0.08,
-    "starBonus": 0.1,
-    "levelCapBase": 40,
-    "levelCapPerStar": 10,
-    "levelCostBase": 10,
-    "levelCostGrowth": 1.25,
-    "shardsToPromote": [2, 3, 5, 8]
-  },
+  "battle": {"timeLimitSec": 60, "gaugeMax": 100, "gaugePerAttack": 34, "damageVariance": 0.06, "rallySec": 8, "introSec": 2.5, "resultSec": 2},
+  "member": {"baseHp": 120, "baseAtk": 12, "levelGrowth": 0.08, "promoteBonus": 0.1, "levelCapPerPromote": 10, "levelCostBase": 10, "levelCostGrowth": 1.25, "shardsToPromote": [2, 3, 5, 8]},
   "enemy": {
-    "baseHp": 160,
-    "baseAtk": 14.5,
+    "baseHp": 90,
+    "baseAtk": 3.2,
     "stageGrowth": [
-      1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16,
-      1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09,
-      1.22, 1.07, 1.07, 1.07, 1.07, 1.34, 1.34, 1.34, 1.34, 1.34,
+      1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2,
+      1.17, 1.17, 1.17, 1.17, 1.17, 1.17, 1.17, 1.17, 1.17, 1.17,
+      1.2, 1.12, 1.12, 1.12, 1.12, 1.34, 1.34, 1.34, 1.34, 1.34,
       1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05
     ],
-    "chapterHpMult": [1.3],
-    "chapterAtkMult": [0.62],
-    "count": 3,
+    "chapterHpMult": [],
+    "chapterAtkMult": [],
+    "count": 5,
     "intervalSec": 1.6,
-    "bossHpMult": 4.1,
-    "bossAtkMult": 1.5,
+    "bossHpMult": 7,
+    "bossAtkMult": 2.5,
     "bossIntervalSec": 2,
     "bossSkillPower": 0.9
   },
-  "economy": {
-    "idleGoldBase": 420,
-    "idleGoldGrowth": 1.1,
-    "idleCapHours": 8,
-    "firstClearMinutes": [0.5],
-    "ticketStages": [],
-    "firstClearMats": 1
-  },
+  "economy": {"idleGoldBase": 420, "idleGoldGrowth": 1.1, "idleCapHours": 8, "firstClearMinutes": [0.5], "ticketStages": [], "firstClearMats": 1},
   "companion": {"levelCap": 30, "costMinutesBase": 3, "costMinutesGrowth": 1.15, "matBase": 5, "matGrowth": 1.25, "matPerHour": 6, "skillGrowth": 0.08},
   "progress": {"chapters": 4, "stagesPerChapter": 10},
-  "recruit": {"firstId": "h_costume", "rarities": {"R": {"label": "ふつう", "weight": 1, "statMult": 1}}}
+  "recruit": {
+    "rarities": {
+      "s1": {
+        "label": "★1",
+        "stars": 1,
+        "elite": false,
+        "statMult": 1,
+        "levelCap": 40
+      },
+      "s2": {
+        "label": "★2",
+        "stars": 2,
+        "elite": false,
+        "statMult": 1.2,
+        "levelCap": 50
+      },
+      "s3": {
+        "label": "★3",
+        "stars": 3,
+        "elite": false,
+        "statMult": 1.45,
+        "levelCap": 60
+      },
+      "s3e": {
+        "label": "★3 エリート",
+        "stars": 3,
+        "elite": true,
+        "statMult": 1.7,
+        "levelCap": 70
+      }
+    },
+    "banners": {
+      "normal": {
+        "label": "通常勧誘",
+        "weights": {
+          "s1": 70,
+          "s2": 26,
+          "s3": 4
+        },
+        "tenGuaranteeStars": 0,
+        "pity": 0,
+        "pityStars": 3
+      },
+      "premium": {
+        "label": "高級勧誘",
+        "weights": {
+          "s1": 40,
+          "s2": 45,
+          "s3": 12,
+          "s3e": 3
+        },
+        "tenGuaranteeStars": 2,
+        "pity": 60,
+        "pityStars": 3
+      }
+    },
+    "firstPremiumTen": [
+      "h_star",
+      "h_costume"
+    ]
+  },
+  "equipment": {
+    "rarities": {
+      "1": {
+        "stars": 1,
+        "bonus": 0.03,
+        "bonusPerLevel": 0.015,
+        "levelCap": 3,
+        "costMult": 1
+      },
+      "2": {
+        "stars": 2,
+        "bonus": 0.06,
+        "bonusPerLevel": 0.02,
+        "levelCap": 5,
+        "costMult": 1.5
+      },
+      "3": {
+        "stars": 3,
+        "bonus": 0.1,
+        "bonusPerLevel": 0.025,
+        "levelCap": 8,
+        "costMult": 2.5
+      }
+    },
+    "enhanceMinutesBase": 0.4,
+    "enhanceMinutesGrowth": 1.35,
+    "dropWeights": [
+      [
+        85,
+        15,
+        0
+      ],
+      [
+        60,
+        36,
+        4
+      ],
+      [
+        40,
+        48,
+        12
+      ],
+      [
+        20,
+        55,
+        25
+      ]
+    ],
+    "firstClearCount": 1,
+    "idleHoursPerItem": 2
+  }
 }

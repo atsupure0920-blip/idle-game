@@ -1,0 +1,14 @@
+[
+  {"id": "e_weapon_1", "name": "木の剣", "slot": "weapon", "stars": 1},
+  {"id": "e_weapon_2", "name": "舞台の剣", "slot": "weapon", "stars": 2},
+  {"id": "e_weapon_3", "name": "名優の剣", "slot": "weapon", "stars": 3},
+  {"id": "e_costume_1", "name": "稽古着", "slot": "costume", "stars": 1},
+  {"id": "e_costume_2", "name": "舞台衣装", "slot": "costume", "stars": 2},
+  {"id": "e_costume_3", "name": "千秋楽の衣装", "slot": "costume", "stars": 3},
+  {"id": "e_prop_1", "name": "紙の扇", "slot": "prop", "stars": 1},
+  {"id": "e_prop_2", "name": "絹の扇", "slot": "prop", "stars": 2},
+  {"id": "e_prop_3", "name": "金の扇", "slot": "prop", "stars": 3},
+  {"id": "e_charm_1", "name": "木のお守り", "slot": "charm", "stars": 1},
+  {"id": "e_charm_2", "name": "銀のお守り", "slot": "charm", "stars": 2},
+  {"id": "e_charm_3", "name": "金のお守り", "slot": "charm", "stars": 3}
+]

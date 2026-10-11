@@ -15,7 +15,7 @@
 //   <プレイヤー>_p<百分位>_min: 値         … その百分位の値が、値以上
 //   <プレイヤー>_p<百分位>_max: 値         … その百分位の値が、値以下
 // 百分位は「小さい順に並べて、下から q% の位置にある値」（最近順位法）。
-// 一度も起きなかった出来事（負け、相棒）は「無限に遅い」として扱う。
+// 一度も起きなかった出来事（負け、相棒、編成が埋まる）は「無限に遅い」として扱う。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -48,8 +48,10 @@ const SECTIONS: Record<string, { title: string; metrics: Record<string, MetricDe
       stage_reached: { label: "到達した面", unit: "面目", get: (r) => r.stageReached },
       first_defeat_min: { label: "初めて負けるまで", unit: "分", get: (r) => r.firstDefeatMin },
       first_companion_min: { label: "初めてボスが相棒になるまで", unit: "分", get: (r) => r.firstCompanionMin },
+      party_full_min: { label: "編成の6枠が埋まるまで", unit: "分", get: (r) => r.partyFullMin },
       recruits_10min: { label: "最初の10分に勧誘した回数", unit: "回", get: (r) => r.recruits10Min },
       members_owned: { label: "持っている団員", unit: "人", get: (r) => r.membersOwned },
+      equipped_slots: { label: "編成の団員が付けている装備", unit: "こ", get: (r) => r.equippedSlots },
       longest_stall_min: { label: "新しい面を突破できなかった時間の最長", unit: "分", get: (r) => r.longestStallMin },
       taps_per_min: { label: "1分あたりの操作", unit: "回", get: (r) => r.tapsPerMin },
     },

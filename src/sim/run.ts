@@ -1,6 +1,6 @@
-// 模擬プレイの実行（第2版）。core の advance を1秒ごとに呼び、ときどきプレイヤーが操作する。
+// 模擬プレイの実行（第3版）。core の advance を1秒ごとに呼び、ときどきプレイヤーが操作する。
 
-import { advance, createGame, ownedCount } from "../core/game.ts";
+import { advance, createGame, equippedCount, ownedCount } from "../core/game.ts";
 import type { GameData, GameEvent } from "../core/game.ts";
 import { stageLabel, totalStages } from "../core/params.ts";
 import type { Content } from "../core/params.ts";
@@ -36,9 +36,13 @@ export interface SimResult {
   firstDefeatMin: number | null;
   /** 初めてボスが相棒になるまでの分数（まだなら null）。 */
   firstCompanionMin: number | null;
+  /** 編成の6枠が埋まるまでの分数（まだなら null）。 */
+  partyFullMin: number | null;
   /** 最初の10分に勧誘した回数。 */
   recruits10Min: number;
   membersOwned: number;
+  /** 編成の団員が付けている装備の数。 */
+  equippedSlots: number;
   /** 新しい面を突破できなかった時間の最長（分）。 */
   longestStallMin: number;
   tapsPerMin: number;
@@ -83,7 +87,7 @@ export function simulate(cfg: SimConfig): SimResult {
       game = step.game;
       for (const e of step.events) {
         if (e.type === "win") chainOpen = true;
-        if (e.type === "defeat") noteDefeat(memo, game, e.stage, e.atMs);
+        if (e.type === "defeat") noteDefeat(memo, game, e.stage, e.atMs, policy);
         const text = describe(e, ctx);
         if (text !== null) timeline.push({ tSec: Math.round((e.atMs - T0) / 1000), text });
       }
@@ -96,7 +100,9 @@ export function simulate(cfg: SimConfig): SimResult {
         const tSec = Math.round((t - T0) / 1000);
         const pulls = game.counters.recruits - before.counters.recruits;
         const levels = game.counters.levelUps - before.counters.levelUps;
+        const resets = game.counters.resets - before.counters.resets;
         if (pulls > 0) timeline.push({ tSec, text: `勧誘 ${pulls}回（団員 ${ownedCount(game)}人）` });
+        if (resets > 0) timeline.push({ tSec, text: `リセット ${resets}人` });
         if (levels > 0) timeline.push({ tSec, text: `稽古 +${levels}レベル` });
         // 操作にかかった時間のぶん、次に画面を見るのが遅れる
         const busyMs = (game.stats.actions - before.stats.actions) * policy.actionSec * 1000;
@@ -125,8 +131,10 @@ export function simulate(cfg: SimConfig): SimResult {
     stageReached: Math.min(game.highestCleared + 1, totalStages(ctx.params)),
     firstDefeatMin: toMin(s.firstDefeatAtMs),
     firstCompanionMin: toMin(s.firstCompanionAtMs),
+    partyFullMin: toMin(s.partyFullAtMs),
     recruits10Min,
     membersOwned: ownedCount(game),
+    equippedSlots: equippedCount(game),
     longestStallMin: Math.round((stall / 60_000) * 100) / 100,
     tapsPerMin: Math.round((s.actions / minutes) * 100) / 100,
     defeats: s.defeats,

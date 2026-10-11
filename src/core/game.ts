@@ -1,50 +1,75 @@
-// ゲーム本体の状態と、それを進める関数（第2版）。
+// ゲーム本体の状態と、それを進める関数（第3版）。
 //
 // 決まり（pipeline/rules/core.md）:
 //   - 画面にも実際の時計にも触れない。時刻は nowMs で受け取る。
 //   - 状態は書き換えず、新しい状態を返す。
 //   - 画面も模擬プレイも、ここにある関数だけでゲームを進める（ルールを二重に書かない）。
 //
-// 流れ（契約書の第2版）:
+// 流れ（契約書の第3版）:
 //   - 「挑戦」（challenge）を押したときだけ戦う。戦闘は、始まった時点で結末まで計算する。
-//     時間がたって advance が呼ばれると、結果が反映される。勝てば初クリア報酬を得て、次の面に挑めるようになる。
-//   - おひねりと相棒の素材は、時間でたまる（開いていても閉じていても同じ速さ）。collectIdle で受け取る。
+//     時間がたって advance が呼ばれると、結果が反映される。勝てば初クリア報酬（おひねり、装備）を得て、次の面に挑めるようになる。
+//   - おひねり、相棒の素材、装備は、時間でたまる（開いていても閉じていても同じ速さ）。collectIdle で受け取る。
+//   - 団員は6人で編成する（前列3、後列3）。レア度は ★1〜★3（★3 には通常とエリート）。
+//     勧誘は通常と高級の2種類で、1回か10連。レベルは、いつでもリセットしておひねりを取り戻せる。
 //   - 倒したボスは相棒になる。持っている相棒は全員、団員全体を底上げする。編成に入れた1体は、戦闘中に技を使う。
+//   - 装備は団員ごとに4か所。付け替えは自由で、おひねりで強化する。
 //   - ミッション（一度きり）と日課（毎日入れ替わる）で、おひねり・チケット・相棒の素材をもらえる。
 
 import { createRng } from "./rng.ts";
+import type { Rng } from "./rng.ts";
 import { runBattle } from "./battle.ts";
 import type { BattleResult, CompanionSpec, FighterSpec } from "./battle.ts";
 import {
+  EQUIP_SLOTS,
+  EQUIP_STAT,
   chapterOf,
   companionCostMinutes,
   companionMatCost,
   companionSkillPower,
   enemyGrowth,
+  equipBonus,
+  equipDropWeights,
+  equipEnhanceMinutes,
+  equipLevelCap,
   firstClearGold,
   idleGoldPerMin,
   isBossStage,
   levelCap,
-  levelCost,
-  maxStar,
-  memberPower,
+  levelCostTo,
+  maxPlus,
   memberStats,
+  powerOf,
   totalStages,
 } from "./params.ts";
-import type { Content, DailyDef, DailyKind, MemberDef, MemberRole, MissionDef, MissionKind, Reward } from "./params.ts";
+import type { BannerDef, BannerId, Content, DailyDef, DailyKind, EquipDef, EquipSlot, MemberDef, MemberRole, MissionDef, MissionKind, Reward } from "./params.ts";
 
-export const GAME_VERSION = 2;
-export const PARTY_SIZE = 4;
+export const GAME_VERSION = 3;
+export const PARTY_SIZE = 6;
+/** 前列の枠の数（編成の前半）。 */
+export const FRONT_SIZE = PARTY_SIZE / 2;
 
 export interface OwnedMember {
   level: number;
-  star: number;
+  /** 昇格の段階（+1、+2…）。 */
+  plus: number;
   /** 昇格に使う「かけら」。 */
   shards: number;
 }
 
 export interface OwnedCompanion {
   level: number;
+}
+
+/** 持っている装備（1つずつ別のもの）。 */
+export interface OwnedEquip {
+  /** 通し番号（手に入れた順）。 */
+  uid: number;
+  /** 装備の種類。 */
+  defId: string;
+  /** 強化の段階。 */
+  level: number;
+  /** 付けている団員（だれも付けていなければ null）。 */
+  on: string | null;
 }
 
 /** 進行中の挑戦。結果は挑戦を押した時点で決まっていて、resolveAtMs を過ぎると反映される。 */
@@ -64,21 +89,29 @@ export interface BattleSlot {
 export interface IdleState {
   /** いまの「8時間の枠」が始まった時刻（最後に受け取った時刻）。 */
   windowStartMs: number;
-  /** ここまでの分は、下の gold と mats に積んである。 */
+  /** ここまでの分は、下の gold・mats・equip に積んである。 */
   anchorMs: number;
   gold: number;
   mats: Record<string, number>;
+  /** 装備（1 で1つぶん）。 */
+  equip: number;
 }
 
 /** 回数の記録（ミッションと日課が使う）。 */
 export interface Counters {
   challenges: number;
+  /** 上げたレベルの数（合計）。 */
   levelUps: number;
+  /** 勧誘した回数（10連は10回と数える）。 */
   recruits: number;
   promotes: number;
+  resets: number;
   idleClaims: number;
   companionLevelUps: number;
+  enhances: number;
 }
+
+const COUNTER_KEYS: (keyof Counters)[] = ["challenges", "levelUps", "recruits", "promotes", "resets", "idleClaims", "companionLevelUps", "enhances"];
 
 export interface DailyState {
   /** 日付の通し番号（画面が端末の日付から作って渡す）。まだ決まっていなければ -1。 */
@@ -89,6 +122,14 @@ export interface DailyState {
   claimed: string[];
 }
 
+/** 勧誘の記録。 */
+export interface RecruitState {
+  /** 天井までの数え（勧誘の種類ごと）。最後に天井の対象（★3）が出てからの回数。 */
+  pity: Record<string, number>;
+  /** 最初の高級10連（決まった団員が出る）を、もう回したか。 */
+  firstTenDone: boolean;
+}
+
 export interface GameStats {
   battles: number;
   wins: number;
@@ -97,6 +138,8 @@ export interface GameStats {
   actions: number;
   firstDefeatAtMs: number | null;
   firstCompanionAtMs: number | null;
+  /** 編成の6枠が、初めて全部埋まった時刻。 */
+  partyFullAtMs: number | null;
   /** 最後に新しい面を突破した時刻。 */
   lastProgressAtMs: number;
   /** 新しい面を突破できなかった時間の最長。 */
@@ -110,20 +153,26 @@ export interface GameData {
   lastActiveMs: number;
   /** おひねり（お金）。 */
   gold: number;
+  /** 通常チケット。 */
   tickets: number;
+  /** 高級チケット。 */
+  premiumTickets: number;
   members: Record<string, OwnedMember>;
-  /** 編成。0・1 が前列、2・3 が後列。 */
+  /** 編成。前半（0〜2）が前列、後半（3〜5）が後列。 */
   party: (string | null)[];
   companions: Record<string, OwnedCompanion>;
   /** 編成に入れている相棒。 */
   companionSlot: string | null;
   /** 相棒ごとの専用の素材。 */
   materials: Record<string, number>;
+  equips: OwnedEquip[];
+  nextEquipUid: number;
   /** 突破した面の通し番号の最大（まだなければ 0）。 */
   highestCleared: number;
   battle: BattleSlot | null;
   idle: IdleState;
   counters: Counters;
+  recruit: RecruitState;
   /** 報酬を受け取ったミッション。 */
   missionsClaimed: string[];
   daily: DailyState;
@@ -135,12 +184,13 @@ export interface GameData {
 export interface RewardAmounts {
   gold: number;
   tickets: number;
+  premiumTickets: number;
   /** 持っている相棒それぞれの素材。 */
   mats: number;
 }
 
 export type GameEvent =
-  | { type: "win"; atMs: number; stage: number; reward: RewardAmounts }
+  | { type: "win"; atMs: number; stage: number; reward: RewardAmounts; /** 初クリア報酬の装備（種類）。 */ equipDefId: string | null }
   | { type: "defeat"; atMs: number; stage: number; timedOut: boolean }
   | { type: "companion"; atMs: number; id: string }
   | { type: "dailyReset"; atMs: number }
@@ -160,7 +210,7 @@ export interface ActionResult {
 }
 
 function zeroCounters(): Counters {
-  return { challenges: 0, levelUps: 0, recruits: 0, promotes: 0, idleClaims: 0, companionLevelUps: 0 };
+  return { challenges: 0, levelUps: 0, recruits: 0, promotes: 0, resets: 0, idleClaims: 0, companionLevelUps: 0, enhances: 0 };
 }
 
 function clone(g: GameData): GameData {
@@ -174,9 +224,11 @@ function clone(g: GameData): GameData {
     party: g.party.slice(),
     companions,
     materials: { ...g.materials },
+    equips: g.equips.map((e) => ({ ...e })),
     battle: g.battle ? { ...g.battle } : null,
     idle: { ...g.idle, mats: { ...g.idle.mats } },
     counters: { ...g.counters },
+    recruit: { ...g.recruit, pity: { ...g.recruit.pity } },
     missionsClaimed: g.missionsClaimed.slice(),
     daily: { ...g.daily, counters: { ...g.daily.counters }, claimed: g.daily.claimed.slice() },
     stats: { ...g.stats },
@@ -190,7 +242,7 @@ export function createGame(nowMs: number, seed: number, ctx: Content): GameData 
   const members: Record<string, OwnedMember> = {};
   const party: (string | null)[] = [];
   for (const m of starters) {
-    members[m.id] = { level: 1, star: 0, shards: 0 };
+    members[m.id] = { level: 1, plus: 0, shards: 0 };
     if (party.length < PARTY_SIZE) party.push(m.id);
   }
   while (party.length < PARTY_SIZE) party.push(null);
@@ -200,15 +252,19 @@ export function createGame(nowMs: number, seed: number, ctx: Content): GameData 
     lastActiveMs: nowMs,
     gold: 0,
     tickets: 0,
+    premiumTickets: 0,
     members,
     party,
     companions: {},
     companionSlot: null,
     materials: {},
+    equips: [],
+    nextEquipUid: 1,
     highestCleared: 0,
     battle: null,
-    idle: { windowStartMs: nowMs, anchorMs: nowMs, gold: 0, mats: {} },
+    idle: { windowStartMs: nowMs, anchorMs: nowMs, gold: 0, mats: {}, equip: 0 },
     counters: zeroCounters(),
+    recruit: { pity: {}, firstTenDone: false },
     missionsClaimed: [],
     daily: { dayKey: -1, counters: zeroCounters(), claims: 0, claimed: [] },
     rngState: seed >>> 0,
@@ -219,6 +275,7 @@ export function createGame(nowMs: number, seed: number, ctx: Content): GameData 
       actions: 0,
       firstDefeatAtMs: null,
       firstCompanionAtMs: null,
+      partyFullAtMs: party.every((x) => x !== null) ? nowMs : null,
       lastProgressAtMs: nowMs,
       longestStallMs: 0,
     },
@@ -252,6 +309,39 @@ export function passiveMult(g: GameData, ctx: Content): { hp: number; atk: numbe
     atk += def.passiveAtk * own.level;
   }
   return { hp, atk };
+}
+
+/** その団員が付けている装備（場所ごと。付けていなければ null）。 */
+export function equippedOn(g: GameData, memberId: string, ctx: Content): Record<EquipSlot, OwnedEquip | null> {
+  const out: Record<EquipSlot, OwnedEquip | null> = { weapon: null, costume: null, prop: null, charm: null };
+  for (const e of g.equips) {
+    if (e.on !== memberId) continue;
+    const def = ctx.equipById[e.defId];
+    if (def) out[def.slot] = e;
+  }
+  return out;
+}
+
+/** 付けている装備による上乗せ（体力と攻撃の倍率）。 */
+export function equipMult(g: GameData, memberId: string, ctx: Content): { hp: number; atk: number } {
+  let hp = 1;
+  let atk = 1;
+  for (const e of g.equips) {
+    if (e.on !== memberId) continue;
+    const def = ctx.equipById[e.defId];
+    if (!def) continue;
+    const bonus = equipBonus(def, e.level, ctx.params);
+    if (EQUIP_STAT[def.slot] === "hp") hp += bonus;
+    else atk += bonus;
+  }
+  return { hp, atk };
+}
+
+/** 編成の団員が付けている装備の数（4か所 × 6人のうち）。 */
+export function equippedCount(g: GameData): number {
+  let n = 0;
+  for (const e of g.equips) if (e.on !== null && g.party.includes(e.on)) n += 1;
+  return n;
 }
 
 export function enemySpecs(stage: number, ctx: Content): FighterSpec[] {
@@ -288,14 +378,22 @@ export function enemySpecs(stage: number, ctx: Content): FighterSpec[] {
   return specs;
 }
 
-/** 団員1人の、戦闘での能力（相棒の底上げを含む）。 */
+/** 団員1人の、戦闘での能力（相棒の底上げと装備を含む）。 */
 export function battleStats(g: GameData, id: string, ctx: Content): { hp: number; atk: number } | null {
   const def = ctx.byId[id];
   const own = g.members[id];
   if (!def || !own) return null;
-  const s = memberStats(def, own.level, own.star, ctx.params);
+  const s = memberStats(def, own.level, own.plus, ctx.params);
   const m = passiveMult(g, ctx);
-  return { hp: Math.round(s.hp * m.hp), atk: Math.round(s.atk * m.atk) };
+  const e = equipMult(g, id, ctx);
+  return { hp: Math.round(s.hp * m.hp * e.hp), atk: Math.round(s.atk * m.atk * e.atk) };
+}
+
+/** 団員1人の強さの目安（相棒の底上げと装備を含む）。 */
+export function memberPowerNow(g: GameData, id: string, ctx: Content): number {
+  const def = ctx.byId[id];
+  const s = battleStats(g, id, ctx);
+  return def && s ? powerOf(s, def.interval) : 0;
 }
 
 export function allySpecs(g: GameData, ctx: Content): FighterSpec[] {
@@ -305,7 +403,7 @@ export function allySpecs(g: GameData, ctx: Content): FighterSpec[] {
     const def = ctx.byId[id];
     const s = battleStats(g, id, ctx);
     if (!def || !s) return;
-    specs.push({ key: id, row: slot < PARTY_SIZE / 2 ? 0 : 1, hp: s.hp, atk: s.atk, interval: def.interval, skill: def.skill, trait: def.trait ?? null });
+    specs.push({ key: id, row: slot < FRONT_SIZE ? 0 : 1, hp: s.hp, atk: s.atk, interval: def.interval, skill: def.skill, trait: def.trait ?? null });
   });
   return specs;
 }
@@ -323,33 +421,11 @@ export function companionSpec(g: GameData, ctx: Content): CompanionSpec | null {
   return { key: id, atk: avgAtk, interval: def.interval, skill: { type: def.skill.type, power: companionSkillPower(def, own.level, ctx.params) } };
 }
 
-/** 編成の強さの目安（相棒の底上げを含む）。 */
+/** 編成の強さの目安（相棒の底上げと装備を含む）。 */
 export function partyPower(g: GameData, ctx: Content): number {
-  const m = passiveMult(g, ctx);
   let sum = 0;
-  for (const id of g.party) {
-    if (id === null) continue;
-    const def = ctx.byId[id];
-    const own = g.members[id];
-    if (def && own) sum += memberPower(def, own.level, own.star, ctx.params);
-  }
-  return Math.round(sum * (m.hp + m.atk) * 0.5);
-}
-
-/** 勧誘での提供割合（画面に表示する）。 */
-export function recruitRates(ctx: Content): { id: string; rate: number }[] {
-  const rarities = ctx.params.recruit.rarities;
-  const used = Object.keys(rarities).filter((r) => ctx.members.some((m) => m.rarity === r));
-  const totalRarity = used.reduce((a, r) => a + (rarities[r]?.weight ?? 0), 0);
-  const out: { id: string; rate: number }[] = [];
-  for (const r of used) {
-    const group = ctx.members.filter((m) => m.rarity === r);
-    const totalWeight = group.reduce((a, m) => a + (m.weight ?? 1), 0);
-    for (const m of group) {
-      out.push({ id: m.id, rate: ((rarities[r]?.weight ?? 0) / totalRarity) * ((m.weight ?? 1) / totalWeight) });
-    }
-  }
-  return out;
+  for (const id of g.party) if (id !== null) sum += memberPowerNow(g, id, ctx);
+  return sum;
 }
 
 export interface Goals {
@@ -376,6 +452,7 @@ export function rewardAmounts(g: GameData, reward: Reward, ctx: Content): Reward
   return {
     gold: Math.round((reward.gold ?? 0) + (reward.goldMin ?? 0) * rate),
     tickets: reward.tickets ?? 0,
+    premiumTickets: reward.premiumTickets ?? 0,
     mats: reward.mats ?? 0,
   };
 }
@@ -383,9 +460,35 @@ export function rewardAmounts(g: GameData, reward: Reward, ctx: Content): Reward
 function grant(g: GameData, amounts: RewardAmounts): void {
   g.gold += amounts.gold;
   g.tickets += amounts.tickets;
+  g.premiumTickets += amounts.premiumTickets;
   if (amounts.mats > 0) {
     for (const id of Object.keys(g.companions)) g.materials[id] = (g.materials[id] ?? 0) + amounts.mats;
   }
+}
+
+/** 重みに従って1つ選ぶ（roll は 0以上1未満）。 */
+function pick<T>(items: T[], weight: (item: T) => number, roll: number): T {
+  const total = items.reduce((a, x) => a + weight(x), 0);
+  let left = roll * total;
+  for (const item of items) {
+    left -= weight(item);
+    if (left < 0) return item;
+  }
+  return items[items.length - 1] as T;
+}
+
+/** 装備を1つ作って、手持ちに加える。★は章ごとの出やすさで、場所は均等に決まる。 */
+function rollEquip(g: GameData, chapter: number, ctx: Content, rng: Rng): OwnedEquip | null {
+  const weights = equipDropWeights(chapter, ctx.params);
+  const starsList = weights.map((_, i) => i + 1).filter((stars) => (weights[stars - 1] ?? 0) > 0 && ctx.equipment.some((d) => d.stars === stars));
+  if (starsList.length === 0) return null;
+  const stars = pick(starsList, (s) => weights[s - 1] ?? 0, rng.next());
+  const defs = ctx.equipment.filter((d) => d.stars === stars);
+  const def = pick(defs, () => 1, rng.next());
+  const item: OwnedEquip = { uid: g.nextEquipUid, defId: def.id, level: 0, on: null };
+  g.nextEquipUid += 1;
+  g.equips.push(item);
+  return item;
 }
 
 // ---------------------------------------------------------------- 放置報酬
@@ -400,6 +503,7 @@ function accrue(g: GameData, toMs: number, ctx: Content): void {
   for (const id of Object.keys(g.companions)) {
     g.idle.mats[id] = (g.idle.mats[id] ?? 0) + (p.companion.matPerHour * dt) / 3_600_000;
   }
+  if (p.equipment.idleHoursPerItem > 0) g.idle.equip += dt / (p.equipment.idleHoursPerItem * 3_600_000);
   g.idle.anchorMs = end;
 }
 
@@ -408,6 +512,8 @@ export interface IdlePending {
   gold: number;
   /** 受け取れる相棒の素材（相棒ごと）。 */
   mats: Record<string, number>;
+  /** 受け取れる装備の数。 */
+  equips: number;
   /** いまの、1分あたりのおひねり。 */
   ratePerMin: number;
   /** 上限（8時間ぶん）に達していて、これ以上たまらない。 */
@@ -427,6 +533,7 @@ export function idlePending(g: GameData, nowMs: number, ctx: Content): IdlePendi
   return {
     gold: Math.floor(c.idle.gold),
     mats,
+    equips: Math.floor(c.idle.equip + 1e-9),
     ratePerMin: idleGoldPerMin(g.highestCleared, ctx.params),
     capped: nowMs - g.idle.windowStartMs >= capMs,
     elapsedMs,
@@ -436,6 +543,8 @@ export function idlePending(g: GameData, nowMs: number, ctx: Content): IdlePendi
 export interface CollectResult extends ActionResult {
   gold?: number;
   mats?: Record<string, number>;
+  /** 受け取った装備。 */
+  equips?: OwnedEquip[];
 }
 
 /** 放置報酬を受け取る（旅の画面の箱）。 */
@@ -452,6 +561,8 @@ export function collectIdle(game: GameData, nowMs: number, ctx: Content): Collec
       any = true;
     }
   }
+  const count = Math.floor(g.idle.equip + 1e-9);
+  if (count > 0) any = true;
   if (!any) return { game, ok: false, reason: "まだ貯まっていません" };
   g.gold += gold;
   g.idle.gold -= gold;
@@ -459,13 +570,24 @@ export function collectIdle(game: GameData, nowMs: number, ctx: Content): Collec
     g.materials[id] = (g.materials[id] ?? 0) + (mats[id] as number);
     g.idle.mats[id] = (g.idle.mats[id] ?? 0) - (mats[id] as number);
   }
+  const equips: OwnedEquip[] = [];
+  if (count > 0) {
+    const rng = createRng(g.rngState);
+    const chapter = chapterOf(Math.max(1, g.highestCleared), ctx.params);
+    for (let i = 0; i < count; i++) {
+      const item = rollEquip(g, chapter, ctx, rng);
+      if (item) equips.push({ ...item });
+    }
+    g.rngState = rng.state();
+    g.idle.equip = Math.max(0, g.idle.equip - count);
+  }
   // 受け取った時点から、新しい8時間の枠が始まる
   g.idle.windowStartMs = Math.max(nowMs, g.idle.anchorMs);
   g.idle.anchorMs = g.idle.windowStartMs;
   g.counters.idleClaims += 1;
   g.daily.counters.idleClaims += 1;
   g.stats.actions += 1;
-  return { game: g, ok: true, gold, mats };
+  return { game: g, ok: true, gold, mats, equips };
 }
 
 // ---------------------------------------------------------------- 進行
@@ -491,13 +613,23 @@ function resolveBattle(g: GameData, ctx: Content, events: GameEvent[]): void {
   const reward: RewardAmounts = {
     gold: firstClearGold(b.stage, p),
     tickets: p.economy.ticketStages.includes(b.stage) ? 1 : 0,
+    premiumTickets: 0,
     mats: Object.keys(g.companions).length > 0 ? p.economy.firstClearMats : 0,
   };
   grant(g, reward);
+  let equipDefId: string | null = null;
+  if (p.equipment.firstClearCount > 0) {
+    const rng = createRng(g.rngState);
+    for (let i = 0; i < p.equipment.firstClearCount; i++) {
+      const item = rollEquip(g, chapterOf(b.stage, p), ctx, rng);
+      if (item && equipDefId === null) equipDefId = item.defId;
+    }
+    g.rngState = rng.state();
+  }
   g.highestCleared = b.stage;
   g.stats.longestStallMs = Math.max(g.stats.longestStallMs, atMs - g.stats.lastProgressAtMs);
   g.stats.lastProgressAtMs = atMs;
-  events.push({ type: "win", atMs, stage: b.stage, reward });
+  events.push({ type: "win", atMs, stage: b.stage, reward, equipDefId });
 
   if (isBossStage(b.stage, p)) {
     const def = ctx.companions.find((c) => c.chapter === chapterOf(b.stage, p));
@@ -579,80 +711,97 @@ export function challenge(game: GameData, nowMs: number, ctx: Content): Challeng
 
 // ---------------------------------------------------------------- 育成
 
-export interface LevelUpInfo {
+export interface LevelPlan {
   ok: boolean;
+  /** いまのレベル。 */
+  from: number;
+  /** 目標のレベル。 */
+  target: number;
+  /** 要るおひねり。 */
   cost: number;
   reason?: string;
 }
 
-export function levelUpInfo(g: GameData, id: string, ctx: Content): LevelUpInfo {
+/** 団員を、指定のレベルまで上げられるか。要るおひねりも返す。 */
+export function levelPlan(g: GameData, id: string, target: number, ctx: Content): LevelPlan {
   const own = g.members[id];
-  if (!own) return { ok: false, cost: 0, reason: "その団員はいません" };
-  const cost = levelCost(own.level, ctx.params);
-  if (own.level >= levelCap(own.star, ctx.params)) return { ok: false, cost, reason: "レベルの上限です（昇格で伸びます）" };
-  if (g.gold < cost) return { ok: false, cost, reason: "おひねりが足りません" };
-  return { ok: true, cost };
+  const def = ctx.byId[id];
+  if (!own || !def) return { ok: false, from: 0, target, cost: 0, reason: "その団員はいません" };
+  const cap = levelCap(def, own.plus, ctx.params);
+  if (!Number.isInteger(target) || target <= own.level) {
+    const atCap = own.level >= cap;
+    return { ok: false, from: own.level, target, cost: 0, reason: atCap ? "レベルの上限です（昇格で伸びます）" : "いまより上のレベルを指定してください" };
+  }
+  const cost = levelCostTo(own.level, target, ctx.params);
+  if (target > cap) return { ok: false, from: own.level, target, cost, reason: `レベルの上限は ${cap} です（昇格で伸びます）` };
+  if (g.gold < cost) return { ok: false, from: own.level, target, cost, reason: "おひねりが足りません" };
+  return { ok: true, from: own.level, target, cost };
 }
 
-function addLevels(g: GameData, n: number): void {
-  g.counters.levelUps += n;
-  g.daily.counters.levelUps += n;
+/** いまのおひねりで上げられる、いちばん高いレベル（上げられなければ、いまのレベル）。 */
+export function maxAffordableLevel(g: GameData, id: string, ctx: Content): number {
+  const own = g.members[id];
+  const def = ctx.byId[id];
+  if (!own || !def) return 0;
+  const cap = levelCap(def, own.plus, ctx.params);
+  let level = own.level;
+  let left = g.gold;
+  while (level < cap) {
+    const cost = levelCostTo(level, level + 1, ctx.params);
+    if (cost > left) break;
+    left -= cost;
+    level += 1;
+  }
+  return level;
 }
 
-/** レベルを1つ上げる。 */
-export function levelUp(game: GameData, id: string, ctx: Content): ActionResult {
-  const info = levelUpInfo(game, id, ctx);
-  if (!info.ok) return { game, ok: false, reason: info.reason };
-  const g = clone(game);
-  g.gold -= info.cost;
-  (g.members[id] as OwnedMember).level += 1;
-  addLevels(g, 1);
-  g.stats.actions += 1;
-  return { game: g, ok: true };
-}
-
-export interface BulkResult extends ActionResult {
-  /** 上がったレベルの数（合計）。 */
+export interface LevelUpResult extends ActionResult {
+  /** 上がったレベルの数。 */
   levels?: number;
 }
 
-/** 1人を、おひねりが続くかぎり（上限まで）まとめて上げる。 */
-export function levelUpMax(game: GameData, id: string, ctx: Content): BulkResult {
-  const first = levelUpInfo(game, id, ctx);
-  if (!first.ok) return { game, ok: false, reason: first.reason };
+/** 団員を、指定のレベルまで上げる（+1、+10、レベルの指定は、どれもこれを呼ぶ）。 */
+export function levelUpTo(game: GameData, id: string, target: number, ctx: Content): LevelUpResult {
+  const plan = levelPlan(game, id, target, ctx);
+  if (!plan.ok) return { game, ok: false, reason: plan.reason };
   const g = clone(game);
-  let levels = 0;
-  for (let guard = 0; guard < 1000; guard++) {
-    const info = levelUpInfo(g, id, ctx);
-    if (!info.ok) break;
-    g.gold -= info.cost;
-    (g.members[id] as OwnedMember).level += 1;
-    levels += 1;
-  }
-  addLevels(g, levels);
+  const levels = plan.target - plan.from;
+  g.gold -= plan.cost;
+  (g.members[id] as OwnedMember).level = plan.target;
+  g.counters.levelUps += levels;
+  g.daily.counters.levelUps += levels;
   g.stats.actions += 1;
   return { game: g, ok: true, levels };
 }
 
-/** 編成の全員を、レベルの低い団員から順に、おひねりが続くかぎりまとめて上げる。 */
-export function trainParty(game: GameData, ctx: Content): BulkResult {
+export interface ResetInfo {
+  ok: boolean;
+  /** 戻ってくるおひねり。 */
+  refund: number;
+  reason?: string;
+}
+
+export function resetInfo(g: GameData, id: string, ctx: Content): ResetInfo {
+  const own = g.members[id];
+  if (!own) return { ok: false, refund: 0, reason: "その団員はいません" };
+  if (own.level <= 1) return { ok: false, refund: 0, reason: "レベル1なので、リセットするものがありません" };
+  return { ok: true, refund: levelCostTo(1, own.level, ctx.params) };
+}
+
+export interface ResetResult extends ActionResult {
+  refund?: number;
+}
+
+/** 団員のレベルを1に戻す。レベル上げに使ったおひねりが、全部戻る。昇格と装備は、そのまま。 */
+export function resetLevel(game: GameData, id: string, ctx: Content): ResetResult {
+  const info = resetInfo(game, id, ctx);
+  if (!info.ok) return { game, ok: false, reason: info.reason };
   const g = clone(game);
-  let levels = 0;
-  for (let guard = 0; guard < 4000; guard++) {
-    let target: string | null = null;
-    for (const id of g.party) {
-      if (id === null || !levelUpInfo(g, id, ctx).ok) continue;
-      if (target === null || (g.members[id] as OwnedMember).level < (g.members[target] as OwnedMember).level) target = id;
-    }
-    if (target === null) break;
-    g.gold -= levelCost((g.members[target] as OwnedMember).level, ctx.params);
-    (g.members[target] as OwnedMember).level += 1;
-    levels += 1;
-  }
-  if (levels === 0) return { game, ok: false, reason: "おひねりが足りないか、全員が上限です" };
-  addLevels(g, levels);
+  (g.members[id] as OwnedMember).level = 1;
+  g.gold += info.refund;
+  g.counters.resets += 1;
   g.stats.actions += 1;
-  return { game: g, ok: true, levels };
+  return { game: g, ok: true, refund: info.refund };
 }
 
 export interface PromoteInfo {
@@ -664,69 +813,145 @@ export interface PromoteInfo {
 export function promoteInfo(g: GameData, id: string, ctx: Content): PromoteInfo {
   const own = g.members[id];
   if (!own) return { ok: false, need: 0, reason: "その団員はいません" };
-  if (own.star >= maxStar(ctx.params)) return { ok: false, need: 0, reason: "これ以上は昇格できません" };
-  const need = ctx.params.member.shardsToPromote[own.star] as number;
+  if (own.plus >= maxPlus(ctx.params)) return { ok: false, need: 0, reason: "これ以上は昇格できません" };
+  const need = ctx.params.member.shardsToPromote[own.plus] as number;
   if (own.shards < need) return { ok: false, need, reason: "かけらが足りません" };
   return { ok: true, need };
 }
 
-/** かけらを使って昇格する（★が1つ上がり、レベルの上限が伸びる）。 */
+/** かけらを使って昇格する（+1 され、能力が上がり、レベルの上限が伸びる）。 */
 export function promote(game: GameData, id: string, ctx: Content): ActionResult {
   const info = promoteInfo(game, id, ctx);
   if (!info.ok) return { game, ok: false, reason: info.reason };
   const g = clone(game);
   const own = g.members[id] as OwnedMember;
   own.shards -= info.need;
-  own.star += 1;
+  own.plus += 1;
   g.counters.promotes += 1;
   g.stats.actions += 1;
   return { game: g, ok: true };
 }
 
-// ---------------------------------------------------------------- 団員
+// ---------------------------------------------------------------- 勧誘
 
-export interface RecruitResult extends ActionResult {
-  id?: string;
-  /** すでにいる団員で、かけらになったか。 */
-  duplicate?: boolean;
+export interface RecruitRate {
+  id: string;
+  rate: number;
 }
 
-/** 勧誘チケットを1枚使う。最初の1回は、決まった団員が必ず出る。 */
-export function recruit(game: GameData, ctx: Content): RecruitResult {
-  if (game.tickets < 1) return { game, ok: false, reason: "勧誘チケットがありません" };
-  const g = clone(game);
-  g.tickets -= 1;
-  g.counters.recruits += 1;
-  g.daily.counters.recruits += 1;
-  g.stats.actions += 1;
+function bannerRarities(banner: BannerDef, ctx: Content, minStars: number): string[] {
+  const usable = Object.keys(banner.weights).filter((r) => (banner.weights[r] ?? 0) > 0 && ctx.members.some((m) => m.rarity === r));
+  const filtered = usable.filter((r) => (ctx.params.recruit.rarities[r]?.stars ?? 0) >= minStars);
+  return filtered.length > 0 ? filtered : usable;
+}
 
-  let picked: MemberDef;
-  if (g.counters.recruits === 1) {
-    picked = ctx.byId[ctx.params.recruit.firstId] as MemberDef;
-  } else {
-    const rates = recruitRates(ctx);
-    const rng = createRng(g.rngState);
-    let roll = rng.next();
-    g.rngState = rng.state();
-    picked = ctx.byId[(rates[rates.length - 1] as { id: string }).id] as MemberDef;
-    for (const r of rates) {
-      roll -= r.rate;
-      if (roll < 0) {
-        picked = ctx.byId[r.id] as MemberDef;
-        break;
-      }
+/** 勧誘での提供割合（画面に表示する）。団員ごと。 */
+export function recruitRates(ctx: Content, bannerId: BannerId): RecruitRate[] {
+  const banner = ctx.params.recruit.banners[bannerId];
+  const used = bannerRarities(banner, ctx, 0);
+  const totalRarity = used.reduce((a, r) => a + (banner.weights[r] ?? 0), 0);
+  const out: RecruitRate[] = [];
+  for (const r of used) {
+    const group = ctx.members.filter((m) => m.rarity === r);
+    const totalWeight = group.reduce((a, m) => a + (m.weight ?? 1), 0);
+    for (const m of group) {
+      out.push({ id: m.id, rate: ((banner.weights[r] ?? 0) / totalRarity) * ((m.weight ?? 1) / totalWeight) });
     }
   }
-
-  const own = g.members[picked.id];
-  if (own) {
-    own.shards += 1;
-    return { game: g, ok: true, id: picked.id, duplicate: true };
-  }
-  // 新しい団員は、レベル1から始まる
-  g.members[picked.id] = { level: 1, star: 0, shards: 0 };
-  return { game: g, ok: true, id: picked.id, duplicate: false };
+  return out;
 }
+
+/** 勧誘での、レア度ごとの割合。 */
+export function recruitRarityRates(ctx: Content, bannerId: BannerId): { rarity: string; rate: number }[] {
+  const banner = ctx.params.recruit.banners[bannerId];
+  const used = bannerRarities(banner, ctx, 0);
+  const total = used.reduce((a, r) => a + (banner.weights[r] ?? 0), 0);
+  return used.map((r) => ({ rarity: r, rate: (banner.weights[r] ?? 0) / total }));
+}
+
+/** 天井まで、あと何回か（次の1回が確定なら 1。天井のない勧誘は null）。 */
+export function pityLeft(g: GameData, bannerId: BannerId, ctx: Content): number | null {
+  const banner = ctx.params.recruit.banners[bannerId];
+  if (banner.pity <= 0) return null;
+  return Math.max(1, banner.pity - (g.recruit.pity[bannerId] ?? 0));
+}
+
+function ticketsOf(g: GameData, bannerId: BannerId): number {
+  return bannerId === "premium" ? g.premiumTickets : g.tickets;
+}
+
+export interface RecruitOutcome {
+  id: string;
+  /** すでにいる団員で、かけらになったか。 */
+  duplicate: boolean;
+}
+
+export interface RecruitResult extends ActionResult {
+  results?: RecruitOutcome[];
+}
+
+/** 勧誘する。count は 1（1回）か 10（10連）。チケットを count 枚使う。 */
+export function recruit(game: GameData, bannerId: BannerId, count: number, ctx: Content): RecruitResult {
+  const banner = ctx.params.recruit.banners[bannerId];
+  if (!banner) return { game, ok: false, reason: "その勧誘はありません" };
+  if (count !== 1 && count !== 10) return { game, ok: false, reason: "勧誘は、1回か10連です" };
+  if (ticketsOf(game, bannerId) < count) return { game, ok: false, reason: bannerId === "premium" ? "高級チケットが足りません" : "通常チケットが足りません" };
+  const g = clone(game);
+  if (bannerId === "premium") g.premiumTickets -= count;
+  else g.tickets -= count;
+
+  // 最初の高級10連では、決まった団員（★3 の団員と、回復役）がかならず出る
+  let forced: string[] = [];
+  if (bannerId === "premium" && count === 10 && !g.recruit.firstTenDone) {
+    forced = ctx.params.recruit.firstPremiumTen.slice(0, count);
+    g.recruit.firstTenDone = true;
+  }
+
+  const rarities = ctx.params.recruit.rarities;
+  const rng = createRng(g.rngState);
+  const results: RecruitOutcome[] = [];
+  let guaranteed = banner.tenGuaranteeStars <= 0;
+  for (let i = 0; i < count; i++) {
+    let def: MemberDef;
+    const forcedId = forced[i];
+    if (forcedId !== undefined) {
+      def = ctx.byId[forcedId] as MemberDef;
+    } else {
+      let minStars = 0;
+      // 天井: 対象が出ないままこの回になったら、かならず出す
+      if (banner.pity > 0 && (g.recruit.pity[bannerId] ?? 0) + 1 >= banner.pity) minStars = banner.pityStars;
+      // 10連の確定: 最後の1回まで出ていなければ、最後の1回でかならず出す
+      if (count === 10 && !guaranteed && i === count - 1) minStars = Math.max(minStars, banner.tenGuaranteeStars);
+      const pool = bannerRarities(banner, ctx, minStars);
+      const rarity = pick(pool, (r) => banner.weights[r] ?? 0, rng.next());
+      def = pick(
+        ctx.members.filter((m) => m.rarity === rarity),
+        (m) => m.weight ?? 1,
+        rng.next(),
+      );
+    }
+    const stars = rarities[def.rarity]?.stars ?? 0;
+    if (stars >= banner.tenGuaranteeStars) guaranteed = true;
+    if (banner.pity > 0) g.recruit.pity[bannerId] = stars >= banner.pityStars ? 0 : (g.recruit.pity[bannerId] ?? 0) + 1;
+
+    const own = g.members[def.id];
+    if (own) {
+      own.shards += 1;
+      results.push({ id: def.id, duplicate: true });
+    } else {
+      // 新しい団員は、レベル1から始まる
+      g.members[def.id] = { level: 1, plus: 0, shards: 0 };
+      results.push({ id: def.id, duplicate: false });
+    }
+  }
+  g.rngState = rng.state();
+  g.counters.recruits += count;
+  g.daily.counters.recruits += count;
+  g.stats.actions += 1;
+  return { game: g, ok: true, results };
+}
+
+// ---------------------------------------------------------------- 編成
 
 /** 編成の枠に団員を置く（null で外す）。すでに別の枠にいる団員を置くと、入れ替わる。 */
 export function setPartySlot(game: GameData, slot: number, id: string | null): ActionResult {
@@ -740,6 +965,7 @@ export function setPartySlot(game: GameData, slot: number, id: string | null): A
   }
   g.party[slot] = id;
   if (g.party.every((x) => x === null)) return { game, ok: false, reason: "編成を空にはできません" };
+  if (g.stats.partyFullAtMs === null && g.party.every((x) => x !== null)) g.stats.partyFullAtMs = g.lastActiveMs;
   g.stats.actions += 1;
   return { game: g, ok: true };
 }
@@ -790,18 +1016,149 @@ export function companionLevelUp(game: GameData, id: string, ctx: Content): Acti
   return { game: g, ok: true };
 }
 
+// ---------------------------------------------------------------- 装備
+
+function findEquip(g: GameData, uid: number): OwnedEquip | undefined {
+  return g.equips.find((e) => e.uid === uid);
+}
+
+/** 装備を団員に付ける。同じ場所に付けていた装備は外れる。ほかの団員が付けていた装備なら、そちらから移る。 */
+export function equipItem(game: GameData, uid: number, memberId: string, ctx: Content): ActionResult {
+  const item = findEquip(game, uid);
+  const def = item ? ctx.equipById[item.defId] : undefined;
+  if (!item || !def) return { game, ok: false, reason: "その装備はありません" };
+  if (!game.members[memberId]) return { game, ok: false, reason: "その団員はいません" };
+  if (item.on === memberId) return { game, ok: false, reason: "すでに付けています" };
+  const g = clone(game);
+  for (const e of g.equips) {
+    if (e.on === memberId && ctx.equipById[e.defId]?.slot === def.slot) e.on = null;
+  }
+  (findEquip(g, uid) as OwnedEquip).on = memberId;
+  g.stats.actions += 1;
+  return { game: g, ok: true };
+}
+
+/** 装備を外す。 */
+export function unequipItem(game: GameData, uid: number): ActionResult {
+  const item = findEquip(game, uid);
+  if (!item) return { game, ok: false, reason: "その装備はありません" };
+  if (item.on === null) return { game, ok: false, reason: "付けていません" };
+  const g = clone(game);
+  (findEquip(g, uid) as OwnedEquip).on = null;
+  g.stats.actions += 1;
+  return { game: g, ok: true };
+}
+
+export interface EnhanceInfo {
+  ok: boolean;
+  /** 要るおひねり。 */
+  gold: number;
+  reason?: string;
+}
+
+export function enhanceInfo(g: GameData, uid: number, ctx: Content): EnhanceInfo {
+  const item = findEquip(g, uid);
+  const def = item ? ctx.equipById[item.defId] : undefined;
+  if (!item || !def) return { ok: false, gold: 0, reason: "その装備はありません" };
+  const p = ctx.params;
+  const gold = Math.round(equipEnhanceMinutes(def, item.level, p) * idleGoldPerMin(Math.max(1, g.highestCleared), p));
+  if (item.level >= equipLevelCap(def, p)) return { ok: false, gold, reason: "強化の上限です" };
+  if (g.gold < gold) return { ok: false, gold, reason: "おひねりが足りません" };
+  return { ok: true, gold };
+}
+
+/** 装備を1段階強化する（おひねりを使う）。強化は、付け替えても残る。 */
+export function enhanceEquip(game: GameData, uid: number, ctx: Content): ActionResult {
+  const info = enhanceInfo(game, uid, ctx);
+  if (!info.ok) return { game, ok: false, reason: info.reason };
+  const g = clone(game);
+  g.gold -= info.gold;
+  (findEquip(g, uid) as OwnedEquip).level += 1;
+  g.counters.enhances += 1;
+  g.daily.counters.enhances += 1;
+  g.stats.actions += 1;
+  return { game: g, ok: true };
+}
+
+/** 1人ぶんの「おまかせ」。pool に入っている装備の中から、場所ごとにいちばん良いものを付ける。付け替えた数を返す。 */
+function autoEquipInto(g: GameData, memberId: string, ctx: Content, usable: (e: OwnedEquip) => boolean): number {
+  let changed = 0;
+  for (const slot of EQUIP_SLOTS) {
+    let best: OwnedEquip | null = null;
+    let bestBonus = -1;
+    for (const e of g.equips) {
+      const def = ctx.equipById[e.defId];
+      if (!def || def.slot !== slot) continue;
+      if (e.on !== memberId && !usable(e)) continue;
+      const bonus = equipBonus(def, e.level, ctx.params);
+      // 同じ良さなら、いま付けているものを優先し、その次に、先に手に入れたもの
+      const better = bonus > bestBonus + 1e-12 || (Math.abs(bonus - bestBonus) <= 1e-12 && best !== null && best.on !== memberId && e.on === memberId);
+      if (better) {
+        best = e;
+        bestBonus = bonus;
+      }
+    }
+    if (best === null || best.on === memberId) continue;
+    for (const e of g.equips) {
+      if (e.on === memberId && ctx.equipById[e.defId]?.slot === slot) e.on = null;
+    }
+    best.on = memberId;
+    changed += 1;
+  }
+  return changed;
+}
+
+export interface AutoEquipResult extends ActionResult {
+  /** 付け替えた数。 */
+  changed?: number;
+}
+
+/** 1人に「おまかせ装備」。だれも付けていない装備の中から、場所ごとにいちばん良いものを付ける。 */
+export function autoEquip(game: GameData, memberId: string, ctx: Content): AutoEquipResult {
+  if (!game.members[memberId]) return { game, ok: false, reason: "その団員はいません" };
+  const g = clone(game);
+  const changed = autoEquipInto(g, memberId, ctx, (e) => e.on === null);
+  if (changed === 0) return { game, ok: false, reason: "いまより良い装備が、手持ちにありません" };
+  g.stats.actions += 1;
+  return { game: g, ok: true, changed };
+}
+
+/**
+ * 編成の全員に「おまかせ装備」。編成の並び順に、場所ごとにいちばん良いものを付けていく。
+ * だれも付けていない装備と、編成に入っていない団員が付けている装備を使う。
+ */
+export function autoEquipParty(game: GameData, ctx: Content): AutoEquipResult {
+  const g = clone(game);
+  let changed = 0;
+  for (const id of g.party) {
+    if (id === null) continue;
+    changed += autoEquipInto(g, id, ctx, (e) => e.on === null || !g.party.includes(e.on));
+  }
+  if (changed === 0) return { game, ok: false, reason: "いまより良い装備が、手持ちにありません" };
+  g.stats.actions += 1;
+  return { game: g, ok: true, changed };
+}
+
+/** 「おまかせ装備（編成の全員）」で、付け替えが起きるか（画面の印に使う）。 */
+export function canAutoEquipParty(g: GameData, ctx: Content): boolean {
+  return autoEquipParty(g, ctx).ok;
+}
+
 // ---------------------------------------------------------------- ミッションと日課
 
 function missionProgress(kind: MissionKind, g: GameData): number {
   switch (kind) {
     case "clear":
       return g.highestCleared;
-    case "levelUps":
-      return g.counters.levelUps;
     case "memberLevel": {
       let max = 0;
       for (const m of Object.values(g.members)) if (m.level > max) max = m.level;
       return max;
+    }
+    case "partyLevel": {
+      let sum = 0;
+      for (const id of g.party) if (id !== null) sum += g.members[id]?.level ?? 0;
+      return sum;
     }
     case "recruits":
       return g.counters.recruits;
@@ -809,6 +1166,8 @@ function missionProgress(kind: MissionKind, g: GameData): number {
       return g.party.filter((x) => x !== null).length;
     case "promotes":
       return g.counters.promotes;
+    case "resets":
+      return g.counters.resets;
     case "idleClaims":
       return g.counters.idleClaims;
     case "companions":
@@ -817,6 +1176,10 @@ function missionProgress(kind: MissionKind, g: GameData): number {
       return g.companionSlot !== null ? 1 : 0;
     case "companionLevelUps":
       return g.counters.companionLevelUps;
+    case "equipped":
+      return equippedCount(g);
+    case "enhances":
+      return g.counters.enhances;
   }
 }
 
@@ -894,7 +1257,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 function isCounters(v: unknown): boolean {
   if (!isRecord(v)) return false;
-  return ["challenges", "levelUps", "recruits", "promotes", "idleClaims", "companionLevelUps"].every((k) => isNum(v[k]) && (v[k] as number) >= 0);
+  return COUNTER_KEYS.every((k) => isNum(v[k]) && (v[k] as number) >= 0);
 }
 
 function isNumberMap(v: unknown): boolean {
@@ -909,16 +1272,16 @@ function isStringList(v: unknown): boolean {
 export function isGameData(v: unknown): v is GameData {
   if (!isRecord(v)) return false;
   if (v["v"] !== GAME_VERSION) return false;
-  for (const k of ["startedAtMs", "lastActiveMs", "gold", "tickets", "highestCleared", "rngState"]) {
+  for (const k of ["startedAtMs", "lastActiveMs", "gold", "tickets", "premiumTickets", "highestCleared", "rngState", "nextEquipUid"]) {
     if (!isNum(v[k])) return false;
   }
-  if ((v["gold"] as number) < 0 || (v["tickets"] as number) < 0 || (v["highestCleared"] as number) < 0) return false;
+  if ((v["gold"] as number) < 0 || (v["tickets"] as number) < 0 || (v["premiumTickets"] as number) < 0 || (v["highestCleared"] as number) < 0) return false;
 
   const members = v["members"];
   if (!isRecord(members) || Object.keys(members).length === 0) return false;
   for (const m of Object.values(members)) {
-    if (!isRecord(m) || !isNum(m["level"]) || !isNum(m["star"]) || !isNum(m["shards"])) return false;
-    if (m["level"] < 1 || m["star"] < 0 || m["shards"] < 0) return false;
+    if (!isRecord(m) || !isNum(m["level"]) || !isNum(m["plus"]) || !isNum(m["shards"])) return false;
+    if (m["level"] < 1 || m["plus"] < 0 || m["shards"] < 0) return false;
   }
   const party = v["party"];
   if (!Array.isArray(party) || party.length !== PARTY_SIZE) return false;
@@ -934,14 +1297,26 @@ export function isGameData(v: unknown): v is GameData {
   if (slot !== null && !(typeof slot === "string" && slot in companions)) return false;
   if (!isNumberMap(v["materials"])) return false;
 
+  const equips = v["equips"];
+  if (!Array.isArray(equips)) return false;
+  const uids = new Set<number>();
+  for (const e of equips) {
+    if (!isRecord(e) || !isNum(e["uid"]) || typeof e["defId"] !== "string" || !isNum(e["level"]) || e["level"] < 0) return false;
+    if (e["on"] !== null && !(typeof e["on"] === "string" && e["on"] in members)) return false;
+    if (uids.has(e["uid"]) || e["uid"] >= (v["nextEquipUid"] as number)) return false;
+    uids.add(e["uid"]);
+  }
+
   const b = v["battle"];
   if (b !== null) {
     if (!isRecord(b) || !isNum(b["stage"]) || !isNum(b["startedAtMs"]) || !isNum(b["endsAtMs"]) || !isNum(b["resolveAtMs"])) return false;
     if (typeof b["win"] !== "boolean" || typeof b["timedOut"] !== "boolean") return false;
   }
   const idle = v["idle"];
-  if (!isRecord(idle) || !isNum(idle["windowStartMs"]) || !isNum(idle["anchorMs"]) || !isNum(idle["gold"]) || !isNumberMap(idle["mats"])) return false;
+  if (!isRecord(idle) || !isNum(idle["windowStartMs"]) || !isNum(idle["anchorMs"]) || !isNum(idle["gold"]) || !isNumberMap(idle["mats"]) || !isNum(idle["equip"])) return false;
   if (!isCounters(v["counters"]) || !isStringList(v["missionsClaimed"])) return false;
+  const rec = v["recruit"];
+  if (!isRecord(rec) || !isNumberMap(rec["pity"]) || typeof rec["firstTenDone"] !== "boolean") return false;
   const daily = v["daily"];
   if (!isRecord(daily) || !isNum(daily["dayKey"]) || !isNum(daily["claims"]) || !isCounters(daily["counters"]) || !isStringList(daily["claimed"])) return false;
 
@@ -950,14 +1325,14 @@ export function isGameData(v: unknown): v is GameData {
   for (const k of ["battles", "wins", "defeats", "actions", "lastProgressAtMs", "longestStallMs"]) {
     if (!isNum(s[k])) return false;
   }
-  for (const k of ["firstDefeatAtMs", "firstCompanionAtMs"]) {
+  for (const k of ["firstDefeatAtMs", "firstCompanionAtMs", "partyFullAtMs"]) {
     if (s[k] !== null && !isNum(s[k])) return false;
   }
   return true;
 }
 
 /**
- * 団員や相棒の定義が変わったあとでも動くように、セーブを整える。
+ * 団員・相棒・装備の定義が変わったあとでも動くように、セーブを整える。
  * 定義から消えたものを外し、編成が空になったら、持っている団員で埋める。
  */
 export function sanitizeGame(game: GameData, ctx: Content): GameData {
@@ -967,7 +1342,7 @@ export function sanitizeGame(game: GameData, ctx: Content): GameData {
   }
   g.party = g.party.map((id) => (id !== null && g.members[id] ? id : null));
   if (Object.keys(g.members).length === 0) {
-    for (const m of ctx.members.filter((d) => d.starter)) g.members[m.id] = { level: 1, star: 0, shards: 0 };
+    for (const m of ctx.members.filter((d) => d.starter)) g.members[m.id] = { level: 1, plus: 0, shards: 0 };
   }
   if (g.party.every((x) => x === null)) {
     Object.keys(g.members)
@@ -984,6 +1359,10 @@ export function sanitizeGame(game: GameData, ctx: Content): GameData {
     }
   }
   if (g.companionSlot !== null && !g.companions[g.companionSlot]) g.companionSlot = null;
+  g.equips = g.equips.filter((e) => ctx.equipById[e.defId] !== undefined);
+  for (const e of g.equips) {
+    if (e.on !== null && !g.members[e.on]) e.on = null;
+  }
   g.highestCleared = Math.min(g.highestCleared, totalStages(ctx.params));
   if (g.battle !== null && g.battle.stage !== g.highestCleared + 1) g.battle = null;
   return g;

@@ -20,8 +20,9 @@
 | ユーザーの感想と要望 | `feedback/F-*.md`（1件1票）、`feedback/G1.md`（採点表） |
 | 保留にした要望 | `pipeline/BACKLOG.md` |
 | 承認の記録 | `pipeline/APPROVALS.md` |
-| 最初の30分の計算結果 | 第2版は `pipeline/reports/S3-v2-first30.md`（第1版は `S2-first30.md`） |
-| 第2版の作り（セーブの扱い、画面の構成、数値の作り、宿題） | `pipeline/DECISIONS.md` の D-013、D-014 |
+| 最初の30分の計算結果 | 第3版は `pipeline/reports/S3-v3-first30.md`（第2版は `S3-v2-first30.md`、第1版は `S2-first30.md`） |
+| いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015（第2版は D-013、D-014） |
+| 作り直しの経緯と、ユーザーの回答 | `spec/REVISION-1.md`（決定16〜27）、`spec/REVISION-2.md`（決定28〜41） |
 
 ## 作業のしかた（この環境に特有のこと）
 
@@ -37,6 +38,7 @@
 - Claude 側の環境で編集した場合は、`git bundle` で1つのファイルにまとめてこのフォルダへ送り、`git pull` で取り込む。
   **まとめたファイルの名前は、毎回変える**（同じ名前だと、古い中身が届いたことがあった）。
   このフォルダ側で番号（build-N）が付いたら、Claude 側にも同じ番号を付けておく。
+- ユーザーから届いた生のログ（端末の情報を含む）は `feedback/logs/` に置く。ここは履歴に入れない（公開しない）。
 - 鍵（GitHub のトークン）は `.secrets/github-token.txt` にある。中身を表示しない、会話に出さない、履歴に入れない。
 - 履歴の作成者名は `idle-game <idle-game@users.noreply.invalid>`（ユーザーのメールアドレスを公開リポジトリに出さないため）。
   GitHub 上では「未検証」と表示されるが、動作には関係しない。過去の履歴は書き換えない（番号の目印が壊れる）。

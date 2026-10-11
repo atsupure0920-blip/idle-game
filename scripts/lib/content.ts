@@ -9,6 +9,7 @@ export const CONTENT_FILES = {
   params: "params/base.json",
   members: "params/members.json",
   companions: "params/companions.json",
+  equipment: "params/equipment.json",
   missions: "params/missions.json",
   dailies: "params/dailies.json",
 } as const;

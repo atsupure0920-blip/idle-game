@@ -2,7 +2,8 @@
 
 import type { BattleEventKind } from "../core/battle.ts";
 import type { RewardAmounts } from "../core/game.ts";
-import type { CompanionDef, Content, MemberRole, Skill, Trait } from "../core/params.ts";
+import { EQUIP_STAT, equipBonus } from "../core/params.ts";
+import type { CompanionDef, Content, EquipDef, EquipSlot, MemberDef, MemberRole, Params, Skill, Trait } from "../core/params.ts";
 
 export const ROLE_LABEL: Record<MemberRole, string> = {
   tank: "盾役",
@@ -79,9 +80,45 @@ export function passiveText(def: CompanionDef, level: number): string {
 export function rewardText(r: RewardAmounts): string {
   const parts: string[] = [];
   if (r.gold > 0) parts.push(`おひねり ${formatNumber(r.gold)}`);
-  if (r.tickets > 0) parts.push(`勧誘チケット ${r.tickets}枚`);
+  if (r.premiumTickets > 0) parts.push(`高級チケット ${r.premiumTickets}枚`);
+  if (r.tickets > 0) parts.push(`通常チケット ${r.tickets}枚`);
   if (r.mats > 0) parts.push(`相棒の素材 ${r.mats}こ`);
   return parts.length === 0 ? "なし" : parts.join("、");
+}
+
+/** ★の並び（★3 なら「★★★」）。 */
+export function starsText(n: number): string {
+  return "★".repeat(Math.max(0, n));
+}
+
+/** 団員のレア度の表示（「★★★ エリート」など）。 */
+export function rarityText(def: MemberDef, p: Params): string {
+  const r = p.recruit.rarities[def.rarity];
+  if (!r) return "";
+  return `${starsText(r.stars)}${r.elite ? " エリート" : ""}`;
+}
+
+/** 昇格の表示（「+2」。昇格していなければ空）。 */
+export function plusText(plus: number): string {
+  return plus > 0 ? `+${plus}` : "";
+}
+
+export const SLOT_LABEL: Record<EquipSlot, string> = {
+  weapon: "武器",
+  costume: "衣装",
+  prop: "小道具",
+  charm: "お守り",
+};
+
+/** 装備の名前（「舞台の剣 ★★ +2」）。 */
+export function equipName(def: EquipDef, level: number): string {
+  return `${def.name} ${starsText(def.stars)}${level > 0 ? ` +${level}` : ""}`;
+}
+
+/** 装備の効果（「攻撃 +8%」）。 */
+export function equipEffectText(def: EquipDef, level: number, p: Params): string {
+  const bonus = equipBonus(def, level, p);
+  return `${EQUIP_STAT[def.slot] === "hp" ? "体力" : "攻撃"} +${Math.round(bonus * 1000) / 10}%`;
 }
 
 /** 戦闘の出来事が「技」なら、その名前。通常の攻撃や戦闘不能なら null。 */
