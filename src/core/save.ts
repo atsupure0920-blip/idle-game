@@ -18,7 +18,7 @@ export interface SaveEnvelope {
 }
 
 export type LoadResult =
-  | { kind: "ok"; state: GameState; migratedFrom: number | null }
+  | { kind: "ok"; state: GameState; migratedFrom: number | null; /** ゲームの作りが大きく変わり、古い版のゲームの状態を引き継げなかった（最初からになる）。 */ gameReset: boolean }
   /** セーブがまだない。 */
   | { kind: "empty" }
   /** 壊れていて読めない。上書きする前に、元の文字列を退避すること。 */
@@ -73,18 +73,29 @@ export function deserialize(
     state = { ...step(state as Record<string, unknown>), version: v + 1 };
   }
 
-  // ゲーム本体（game）は独自の版番号を持つ。新しすぎる版は、上書きを避けるために読み込まない。
+  // ゲーム本体（game）は独自の版番号を持つ。
+  //   新しすぎる版 … 上書きを避けるために読み込まない。
+  //   古い版       … ゲームの作りが大きく変わったので引き継げない。ゲームは最初からになる（起動の回数などは残る）。
+  //                  呼び出し側は、元のセーブを退避してから進めること。
+  let gameReset = false;
   const game = (state as Record<string, unknown>)["game"];
   if (game !== undefined) {
     const gv = isRecord(game) ? game["v"] : undefined;
     if (typeof gv === "number" && gv > GAME_VERSION) return { kind: "too_new", version: gv };
-    if (!isGameData(game)) return { kind: "corrupt", reason: "ゲームの状態の形が正しくありません" };
+    if (typeof gv === "number" && Number.isInteger(gv) && gv >= 1 && gv < GAME_VERSION) {
+      const rest: Record<string, unknown> = { ...(state as Record<string, unknown>) };
+      delete rest["game"];
+      state = rest;
+      gameReset = true;
+    } else if (!isGameData(game)) {
+      return { kind: "corrupt", reason: "ゲームの状態の形が正しくありません" };
+    }
   }
 
   if (!isGameState(state, currentVersion)) {
     return { kind: "corrupt", reason: "状態の形が正しくありません" };
   }
-  return { kind: "ok", state, migratedFrom: version === currentVersion ? null : version };
+  return { kind: "ok", state, migratedFrom: version === currentVersion ? null : version, gameReset };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

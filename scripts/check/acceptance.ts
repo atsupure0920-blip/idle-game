@@ -3,7 +3,8 @@
 //   node scripts/check/acceptance.ts
 //
 // やること:
-//   1. 本番の数値（params/）で、3種類のプレイヤー × 決められた本数の模擬プレイを30分ぶん走らせる
+//   1. 本番の数値（params/）で、3種類のプレイヤー × 決められた本数の模擬プレイを走らせる
+//      （続けて30分。そのあと8時間あけて戻り、10分遊ぶ）
 //   2. ACCEPTANCE.yaml の各項目と比べる
 //   3. 結果を画面と reports/acceptance.json、reports/acceptance.md に出す
 //
@@ -14,31 +15,51 @@
 //   <プレイヤー>_p<百分位>_min: 値         … その百分位の値が、値以上
 //   <プレイヤー>_p<百分位>_max: 値         … その百分位の値が、値以下
 // 百分位は「小さい順に並べて、下から q% の位置にある値」（最近順位法）。
-// 30分のうちに一度も起きなかった出来事（負け、入団）は「無限に遅い」として扱う。
+// 一度も起きなかった出来事（負け、相棒）は「無限に遅い」として扱う。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
-import { buildContent, stageLabel } from "../../src/core/params.ts";
-import type { Content, MemberDef, Params } from "../../src/core/params.ts";
+import { stageLabel } from "../../src/core/params.ts";
+import type { Content } from "../../src/core/params.ts";
 import { simulate } from "../../src/sim/run.ts";
 import type { SimResult } from "../../src/sim/run.ts";
 import { POLICIES } from "../../src/sim/policies.ts";
 import type { PolicyName } from "../../src/sim/policies.ts";
 import { ROOT } from "../lib/env.ts";
+import { loadContent } from "../lib/content.ts";
 
 type Dict = Record<string, unknown>;
 
 const DURATION_SEC = 30 * 60;
+const AWAY = { awaySec: 8 * 3600, afterSec: 10 * 60 };
 
-/** ACCEPTANCE.yaml の項目名と、模擬プレイの結果の対応。 */
-const METRICS: Record<string, { label: string; unit: string; get: (r: SimResult) => number | null }> = {
-  stage_reached: { label: "到達した面", unit: "面目", get: (r) => r.stageReached },
-  first_defeat_min: { label: "初めて負けるまで", unit: "分", get: (r) => r.firstDefeatMin },
-  first_join_min: { label: "初めてボスが入団するまで", unit: "分", get: (r) => r.firstJoinMin },
-  members_owned: { label: "持っている団員", unit: "人", get: (r) => r.membersOwned },
-  longest_stall_min: { label: "進まない時間の最長", unit: "分", get: (r) => r.longestStallMin },
-  taps_per_min: { label: "1分あたりの操作", unit: "回", get: (r) => r.tapsPerMin },
+interface MetricDef {
+  label: string;
+  unit: string;
+  get: (r: SimResult) => number | null;
+}
+
+/** ACCEPTANCE.yaml の区分と項目名と、模擬プレイの結果の対応。 */
+const SECTIONS: Record<string, { title: string; metrics: Record<string, MetricDef> }> = {
+  first_30min: {
+    title: "続けて30分",
+    metrics: {
+      stage_reached: { label: "到達した面", unit: "面目", get: (r) => r.stageReached },
+      first_defeat_min: { label: "初めて負けるまで", unit: "分", get: (r) => r.firstDefeatMin },
+      first_companion_min: { label: "初めてボスが相棒になるまで", unit: "分", get: (r) => r.firstCompanionMin },
+      recruits_10min: { label: "最初の10分に勧誘した回数", unit: "回", get: (r) => r.recruits10Min },
+      members_owned: { label: "持っている団員", unit: "人", get: (r) => r.membersOwned },
+      longest_stall_min: { label: "新しい面を突破できなかった時間の最長", unit: "分", get: (r) => r.longestStallMin },
+      taps_per_min: { label: "1分あたりの操作", unit: "回", get: (r) => r.tapsPerMin },
+    },
+  },
+  return_after_8h: {
+    title: "8時間あけて戻ったあと",
+    metrics: {
+      stages_gained_10min: { label: "戻ってからの10分で突破した面", unit: "面", get: (r) => r.stagesGainedAfterAway },
+    },
+  },
 };
 
 const PLAYER_LABEL: Record<PolicyName, string> = { optimal: "熱心な人", normal: "ふつうの人", lazy: "あまり開かない人" };
@@ -68,16 +89,6 @@ function show(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 }
 
-function readJson(rel: string): unknown {
-  const file = path.join(ROOT, rel);
-  if (!existsSync(file)) stop(`ありません: ${rel}`);
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) as unknown;
-  } catch {
-    return stop(`読めません（書式の誤り）: ${rel}`);
-  }
-}
-
 // --- 合否の数字を読む ---
 const accFile = path.join(ROOT, "spec/ACCEPTANCE.yaml");
 if (!existsSync(accFile)) stop("spec/ACCEPTANCE.yaml がありません。");
@@ -96,7 +107,9 @@ const seeds = acc["seeds"];
 if (!isNum(seeds) || !Number.isInteger(seeds) || seeds < 10) stop("seeds は10以上の整数にしてください。");
 
 interface Rule {
+  section: string;
   metric: string;
+  def: MetricDef;
   player: PolicyName;
   q: number;
   lo: number;
@@ -104,39 +117,47 @@ interface Rule {
   text: string;
 }
 
+const KNOWN_TOP = new Set(["status", "players", "seeds", "day7", ...Object.keys(SECTIONS)]);
+for (const key of Object.keys(acc)) {
+  if (!KNOWN_TOP.has(key)) stop(`知らない区分です: ${key}（検査のしかたが決まっていません）`);
+}
+
 const rules: Rule[] = [];
-const first30 = dict(acc["first_30min"]);
-if (Object.keys(first30).length === 0) stop("first_30min が空です。");
-for (const [metric, raw] of Object.entries(first30)) {
-  if (!(metric in METRICS)) stop(`知らない項目です: first_30min.${metric}（検査のしかたが決まっていません）`);
-  const spec = dict(raw);
-  if (Object.keys(spec).length === 0) stop(`first_30min.${metric} に条件がありません。`);
-  for (const [key, value] of Object.entries(spec)) {
-    const m = /^([a-z]+)_p(\d{1,3})(?:_(min|max))?$/.exec(key);
-    if (!m) stop(`条件の書き方が正しくありません: first_30min.${metric}.${key}`);
-    const player = m[1] as PolicyName;
-    const q = Number(m[2]);
-    if (!players.includes(player)) stop(`players にないプレイヤーです: first_30min.${metric}.${key}`);
-    if (q < 1 || q > 100) stop(`百分位は1〜100です: first_30min.${metric}.${key}`);
-    let lo = -Infinity;
-    let hi = Infinity;
-    if (m[3] === "min" && isNum(value)) lo = value;
-    else if (m[3] === "max" && isNum(value)) hi = value;
-    else if (m[3] === undefined && Array.isArray(value) && value.length === 2 && isNum(value[0]) && isNum(value[1]) && value[0] <= value[1]) {
-      lo = value[0];
-      hi = value[1];
-    } else stop(`値の書き方が正しくありません: first_30min.${metric}.${key}`);
-    const range = m[3] === "min" ? `${lo} 以上` : m[3] === "max" ? `${hi} 以下` : `${lo}〜${hi}`;
-    rules.push({ metric, player, q, lo, hi, text: range });
+for (const [section, sdef] of Object.entries(SECTIONS)) {
+  const block = dict(acc[section]);
+  if (section === "first_30min" && Object.keys(block).length === 0) stop("first_30min が空です。");
+  for (const [metric, raw] of Object.entries(block)) {
+    const def = sdef.metrics[metric];
+    if (!def) stop(`知らない項目です: ${section}.${metric}（検査のしかたが決まっていません）`);
+    const spec = dict(raw);
+    if (Object.keys(spec).length === 0) stop(`${section}.${metric} に条件がありません。`);
+    for (const [key, value] of Object.entries(spec)) {
+      const m = /^([a-z]+)_p(\d{1,3})(?:_(min|max))?$/.exec(key);
+      if (!m) stop(`条件の書き方が正しくありません: ${section}.${metric}.${key}`);
+      const player = m[1] as PolicyName;
+      const q = Number(m[2]);
+      if (!players.includes(player)) stop(`players にないプレイヤーです: ${section}.${metric}.${key}`);
+      if (q < 1 || q > 100) stop(`百分位は1〜100です: ${section}.${metric}.${key}`);
+      let lo = -Infinity;
+      let hi = Infinity;
+      if (m[3] === "min" && isNum(value)) lo = value;
+      else if (m[3] === "max" && isNum(value)) hi = value;
+      else if (m[3] === undefined && Array.isArray(value) && value.length === 2 && isNum(value[0]) && isNum(value[1]) && value[0] <= value[1]) {
+        lo = value[0];
+        hi = value[1];
+      } else stop(`値の書き方が正しくありません: ${section}.${metric}.${key}`);
+      const text = m[3] === "min" ? `${lo} 以上` : m[3] === "max" ? `${hi} 以下` : `${lo}〜${hi}`;
+      rules.push({ section, metric, def, player, q, lo, hi, text });
+    }
   }
 }
 
 // --- 模擬プレイ ---
 let content: Content;
 try {
-  content = buildContent(readJson("params/base.json") as Params, readJson("params/members.json") as MemberDef[]);
+  content = loadContent(ROOT);
 } catch (e) {
-  stop(`数値か団員の定義に誤りがあります: ${e instanceof Error ? e.message : String(e)}`);
+  stop(`数値か定義に誤りがあります: ${e instanceof Error ? e.message : String(e)}`);
 }
 
 const started = Date.now();
@@ -144,12 +165,13 @@ const runs: Record<string, SimResult[]> = {};
 for (const player of players) {
   runs[player] = [];
   for (let seed = 1; seed <= seeds; seed++) {
-    (runs[player] as SimResult[]).push(simulate({ policy: player as PolicyName, seed, durationSec: DURATION_SEC, content }));
+    (runs[player] as SimResult[]).push(simulate({ policy: player as PolicyName, seed, durationSec: DURATION_SEC, content, away: AWAY }));
   }
 }
 
 // --- 判定 ---
 interface Row {
+  section: string;
   metric: string;
   label: string;
   player: PolicyName;
@@ -160,12 +182,12 @@ interface Row {
 }
 
 const rows: Row[] = rules.map((rule) => {
-  const def = METRICS[rule.metric] as (typeof METRICS)[string];
-  const values = (runs[rule.player] as SimResult[]).map((r) => def.get(r) ?? Infinity);
+  const values = (runs[rule.player] as SimResult[]).map((r) => rule.def.get(r) ?? Infinity);
   const value = percentile(values, rule.q);
   return {
+    section: rule.section,
     metric: rule.metric,
-    label: `${def.label}（${def.unit}）`,
+    label: `${rule.def.label}（${rule.def.unit}）`,
     player: rule.player,
     q: rule.q,
     value,
@@ -176,40 +198,38 @@ const rows: Row[] = rules.map((rule) => {
 const allOk = rows.every((r) => r.ok);
 
 function describeQ(q: number): string {
-  if (q === 50) return "中央値";
-  return q < 50 ? `下から${q}%` : `下から${q}%`;
+  return q === 50 ? "中央値" : `下から${q}%`;
 }
 
 const lines: string[] = [];
-lines.push("# 最初の30分の模擬プレイ");
+lines.push("# 模擬プレイの結果");
 lines.push("");
-lines.push(`プレイヤー3種類 × ${seeds}本、各30分。数値は params/、合否の数字は spec/ACCEPTANCE.yaml。`);
+lines.push(`プレイヤー3種類 × ${seeds}本。続けて30分遊び、そのあと8時間あけて戻り、10分遊ぶ。数値は params/、合否の数字は spec/ACCEPTANCE.yaml。`);
 lines.push("");
 lines.push("## 合否");
 lines.push("");
-lines.push("| 項目 | 誰の | どの位置 | 結果 | 合格の範囲 | 判定 |");
-lines.push("| --- | --- | --- | --- | --- | --- |");
+lines.push("| 場面 | 項目 | 誰の | どの位置 | 結果 | 合格の範囲 | 判定 |");
+lines.push("| --- | --- | --- | --- | --- | --- | --- |");
 for (const r of rows) {
-  lines.push(`| ${r.label} | ${PLAYER_LABEL[r.player]} | ${describeQ(r.q)} | ${show(r.value)} | ${r.need} | ${r.ok ? "合格" : "不合格"} |`);
+  lines.push(`| ${SECTIONS[r.section]?.title ?? r.section} | ${r.label} | ${PLAYER_LABEL[r.player]} | ${describeQ(r.q)} | ${show(r.value)} | ${r.need} | ${r.ok ? "合格" : "不合格"} |`);
 }
 lines.push("");
 lines.push("## 3種類のプレイヤーの比較（中央値）");
 lines.push("");
 lines.push("| 項目 | " + players.map((p) => PLAYER_LABEL[p as PolicyName]).join(" | ") + " |");
 lines.push("| --- | " + players.map(() => "---").join(" | ") + " |");
-for (const [metric, def] of Object.entries(METRICS)) {
-  const cells = players.map((p) => {
-    const v = percentile((runs[p] as SimResult[]).map((r) => def.get(r) ?? Infinity), 50);
-    return metric === "stage_reached" && Number.isFinite(v) ? `${show(v)}（${stageLabel(v, content.params)}）` : show(v);
-  });
-  lines.push(`| ${def.label}（${def.unit}） | ${cells.join(" | ")} |`);
+const median = (p: string, get: (r: SimResult) => number | null): number => percentile((runs[p] as SimResult[]).map((r) => get(r) ?? Infinity), 50);
+for (const sdef of Object.values(SECTIONS)) {
+  for (const [metric, def] of Object.entries(sdef.metrics)) {
+    const cells = players.map((p) => {
+      const v = median(p, def.get);
+      return metric === "stage_reached" && Number.isFinite(v) ? `${show(v)}（${stageLabel(v, content.params)}）` : show(v);
+    });
+    lines.push(`| ${def.label}（${def.unit}） | ${cells.join(" | ")} |`);
+  }
 }
-{
-  const cells = players.map((p) => show(percentile((runs[p] as SimResult[]).map((r) => r.battleSecMedian), 50)));
-  lines.push(`| 戦闘1回の長さ（秒） | ${cells.join(" | ")} |`);
-  const defeats = players.map((p) => show(percentile((runs[p] as SimResult[]).map((r) => r.defeats), 50)));
-  lines.push(`| 負けた回数（回） | ${defeats.join(" | ")} |`);
-}
+lines.push(`| 戦闘1回の長さ（秒。面の紹介と結果の表示を除く） | ${players.map((p) => show(median(p, (r) => r.battleSecMedian))).join(" | ")} |`);
+lines.push(`| 負けた回数（回） | ${players.map((p) => show(median(p, (r) => r.defeats))).join(" | ")} |`);
 lines.push("");
 
 // ふつうの人の、まんなかの1本の経過
@@ -217,27 +237,20 @@ const normal = runs["normal"];
 if (normal && normal.length > 0) {
   const byStage = normal.slice().sort((a, b) => a.stageReached - b.stageReached || a.seed - b.seed);
   const typical = byStage[Math.floor(byStage.length / 2)] as SimResult;
-  lines.push(`## ふつうの人の例（${seeds}本のうち、到達した面がまんなかの1本）`);
+  lines.push(`## ふつうの人の例（${seeds}本のうち、到達した面がまんなかの1本。最初の30分）`);
   lines.push("");
   lines.push("| 時刻 | 起きたこと |");
   lines.push("| --- | --- |");
-  let levelUps = 0;
-  const flush = (): void => {
-    if (levelUps > 0) lines[lines.length - 1] = (lines[lines.length - 1] as string).replace(/ \|$/, `、レベル上げ ${levelUps}回 |`);
-    levelUps = 0;
-  };
+  // 同じ時刻の出来事は、1行にまとめる
+  let lastKey = "";
   for (const e of typical.timeline) {
-    const m = /^レベル上げ (\d+)回$/.exec(e.text);
-    if (m) {
-      levelUps += Number(m[1]);
-      continue;
-    }
-    flush();
     const mm = Math.floor(e.tSec / 60);
     const ss = String(e.tSec % 60).padStart(2, "0");
-    lines.push(`| ${mm}:${ss} | ${e.text} |`);
+    const key = `${mm}:${ss}`;
+    if (key === lastKey) lines[lines.length - 1] = (lines[lines.length - 1] as string).replace(/ \|$/, `、${e.text} |`);
+    else lines.push(`| ${key} | ${e.text} |`);
+    lastKey = key;
   }
-  flush();
   lines.push("");
 }
 
@@ -246,20 +259,10 @@ mkdirSync(outDir, { recursive: true });
 writeFileSync(path.join(outDir, "acceptance.md"), lines.join("\n"));
 writeFileSync(
   path.join(outDir, "acceptance.json"),
-  JSON.stringify(
-    {
-      ok: allOk,
-      seeds,
-      players,
-      rows: rows.map((r) => ({ ...r, value: Number.isFinite(r.value) ? r.value : null })),
-      ms: Date.now() - started,
-    },
-    null,
-    2,
-  ),
+  JSON.stringify({ ok: allOk, seeds, players, rows: rows.map((r) => ({ ...r, value: Number.isFinite(r.value) ? r.value : null })), ms: Date.now() - started }, null, 2),
 );
 
-console.log(`最初の30分の模擬プレイ（${players.length}種類 × ${seeds}本）`);
+console.log(`模擬プレイ（${players.length}種類 × ${seeds}本。続けて30分 → 8時間あけて → 10分）`);
 for (const r of rows) {
   console.log(`${r.ok ? "✔" : "✘"} ${r.label} ／ ${PLAYER_LABEL[r.player]}の${describeQ(r.q)}: ${show(r.value)}（合格の範囲: ${r.need}）`);
 }

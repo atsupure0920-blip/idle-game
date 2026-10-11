@@ -1,0 +1,6 @@
+[
+  { "id": "c_bear", "name": "もりのくま", "chapter": 1, "skill": { "type": "healall", "power": 0.8 }, "interval": 9, "passiveHp": 0.02, "passiveAtk": 0, "material": "はちみつ" },
+  { "id": "c_ghost", "name": "いたずらおばけ", "chapter": 2, "skill": { "type": "aoe", "power": 1.0 }, "interval": 8, "passiveHp": 0, "passiveAtk": 0.02, "material": "おばけキャンディ" },
+  { "id": "c_snow", "name": "ゆきだるま", "chapter": 3, "skill": { "type": "rally", "power": 0.25 }, "interval": 12, "passiveHp": 0.01, "passiveAtk": 0.01, "material": "こおり砂糖" },
+  { "id": "c_dragon", "name": "ちびドラゴン", "chapter": 4, "skill": { "type": "strike", "power": 4.0 }, "interval": 7, "passiveHp": 0, "passiveAtk": 0.03, "material": "ほのおの実" }
+]

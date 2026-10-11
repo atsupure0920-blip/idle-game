@@ -1,4 +1,4 @@
-// 画面の入口。実際の時刻と保存領域を扱うのはこの層だけで、ルールは core に任せる。
+// 画面の入口（第2版）。実際の時刻と保存領域を扱うのはこの層だけで、ルールは core に任せる。
 //
 // 仕組み:
 //   - 進行役（session.ts）が、ゲームの状態を持って進める。
@@ -7,24 +7,41 @@
 //   - 押せる要素は data-action を持ち、ここでまとめて受ける。
 
 import { buildContent, isBossStage, stageLabel } from "../core/params.ts";
-import type { MemberDef, Params } from "../core/params.ts";
-import { currentStage, winChance } from "../core/game.ts";
-import type { GameData, GameEvent } from "../core/game.ts";
+import type { ContentData } from "../core/params.ts";
+import { allySpecs, dailyList, enemySpecs, idlePending, missionList, nextStage } from "../core/game.ts";
+import type { GameEvent, RewardAmounts } from "../core/game.ts";
 import { createSession, playLogLines } from "./session.ts";
 import { backupSave, isStandalone, readStore, requestPersistence, writeStore } from "./storage.ts";
 import { createBattleView } from "./battleview.ts";
-import { fighterName, formatDuration, formatNumber } from "./texts.ts";
-import { TABS, badges, joinHtml, journeyInfoHtml, memberDetailHtml, membersHtml, offlineHtml, otherHtml, partyHtml, recruitHtml, recruitResultHtml } from "./views.ts";
-import type { Tab, UiState } from "./views.ts";
+import { fighterName, formatNumber, rewardText } from "./texts.ts";
+import {
+  TABS,
+  badges,
+  companionJoinHtml,
+  companionsHtml,
+  journeyInfoHtml,
+  journeyLive,
+  memberDetailHtml,
+  membersHtml,
+  missionsHtml,
+  otherHtml,
+  partyHtml,
+  recruitHtml,
+  recruitManyHtml,
+  recruitResultHtml,
+} from "./views.ts";
+import type { RecruitOutcome, Tab, UiState } from "./views.ts";
 import { installDebug, logEvent, openLogSheet } from "../debug/debug.ts";
 import { debugPanelHtml } from "../debug/panel.ts";
 
 const TICK_MS = 200;
 const AUTOSAVE_MS = 10_000;
-/** 勝てる見込みを出すときに試す戦闘の回数。 */
-const CHANCE_SAMPLES = 30;
 /** ポップアップが出てから、この時間はポップアップの中のボタンを受け付けない（押し間違いを防ぐ）。 */
 const MODAL_GUARD_MS = 400;
+/** まとめて勧誘で、一度に使うチケットの上限。 */
+const RECRUIT_MANY = 10;
+/** これより長く離れていたら、戻ったときに「箱に貯まっています」と知らせる。 */
+const WELCOME_BACK_MS = 5 * 60_000;
 
 function need<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -44,10 +61,15 @@ function randomSeed(): number {
   return buf[0] ?? 1;
 }
 
+/** 端末の日付の通し番号（端末の時間帯での「日」。日課の入れ替えに使う）。 */
+function localDayKey(ms: number): number {
+  return Math.floor((ms - new Date(ms).getTimezoneOffset() * 60_000) / 86_400_000);
+}
+
 function start(): void {
-  const content = buildContent(__PARAMS__ as Params, __MEMBERS__ as MemberDef[]);
+  const content = buildContent(__CONTENT__ as ContentData);
   const session = createSession(
-    { now: () => Date.now(), seed: randomSeed, read: readStore, write: writeStore, backup: (text, nowMs) => void backupSave(text, nowMs), debug: __DEBUG__ },
+    { now: () => Date.now(), seed: randomSeed, dayKey: localDayKey, read: readStore, write: writeStore, backup: (text, nowMs) => void backupSave(text, nowMs), debug: __DEBUG__ },
     content,
   );
   const p = content.params;
@@ -55,7 +77,7 @@ function start(): void {
   const ui: UiState = {
     tab: "journey",
     selectedSlot: null,
-    chance: null,
+    result: null,
     feed: [],
     buildId: __BUILD_ID__,
     debug: __DEBUG__,
@@ -77,6 +99,7 @@ function start(): void {
   const hudStage = byTestId("hud-stage");
   const hudGold = byTestId("hud-gold");
   const hudTickets = byTestId("hud-tickets");
+  const otherButton = byTestId("tab-other");
   const battle = createBattleView(need("field"));
 
   if (__DEBUG__) {
@@ -114,7 +137,7 @@ function start(): void {
     if (ui.feed.length > 8) ui.feed.pop();
   };
 
-  /** 順番に出すポップアップ。refresh があれば、状態が変わったときに描き直す。 */
+  /** 順番に出すポップアップ。中身は、状態が変わるたびに作り直す。 */
   interface Modal {
     html: () => string;
   }
@@ -149,55 +172,24 @@ function start(): void {
   };
 
   // --- 出来事を画面に出す ---
-  const showBattle = (e: Extract<GameEvent, { type: "battleStart" }>, g: GameData): void => {
-    if (e.replay === null) return;
-    battle.show({
-      stageText: stageLabel(e.stage, p),
-      boss: isBossStage(e.stage, p),
-      challenge: e.stage > g.highestCleared,
-      atMs: e.atMs,
-      endsAtMs: e.endsAtMs,
-      replay: e.replay,
-      allies: e.allies,
-      enemies: e.enemies,
-      name: (key) => fighterName(key, content),
-      gaugeMax: p.battle.gaugeMax,
-      gaugePerAttack: p.battle.gaugePerAttack,
-      timeLimitSec: p.battle.timeLimitSec,
-    });
-  };
-
   const handle = (events: GameEvent[]): void => {
-    let lastStart: Extract<GameEvent, { type: "battleStart" }> | null = null;
     for (const e of events) {
-      if (e.type === "battleStart") {
-        lastStart = e;
-      } else if (e.type === "win") {
-        if (e.firstClear) {
-          feed(`${stageLabel(e.stage, p)} を突破（+${formatNumber(e.gold)}）`);
-          toast(`${stageLabel(e.stage, p)} を突破！ +${formatNumber(e.gold)}`, "good");
-        }
+      if (e.type === "win") {
+        ui.result = { type: "win", stage: e.stage, reward: e.reward, companionId: null };
+        feed(`${stageLabel(e.stage, p)} を突破（${rewardText(e.reward)}）`);
+        // 旅の画面では、結果の欄に出るので、ほかの画面を見ているときだけ知らせる
+        if (ui.tab !== "journey") toast(`${stageLabel(e.stage, p)} を突破！ おひねり +${formatNumber(e.reward.gold)}`, "good");
       } else if (e.type === "defeat") {
+        ui.result = { type: "defeat", stage: e.stage, timedOut: e.timedOut };
         feed(`${stageLabel(e.stage, p)} で負け${e.timedOut ? "（時間切れ）" : ""}`);
-        toast(`${stageLabel(e.stage, p)} で負け…`, "bad");
-      } else if (e.type === "ticket") {
-        feed("勧誘チケットを入手");
-        toast("勧誘チケットを入手！", "good");
-      } else if (e.type === "shard") {
-        const name = content.byId[e.id]?.name ?? "";
-        feed(`${name} のかけらを入手`);
-        toast(`${name} のかけらを入手`, "good");
-      } else if (e.type === "join") {
+        toast(`${stageLabel(e.stage, p)} で負け… 稽古が足りない！`, "bad");
+      } else if (e.type === "companion") {
         const id = e.id;
-        feed(`${content.byId[id]?.name ?? ""} が入団`);
-        openModal(() => joinHtml(content, id));
-      } else if (e.type === "offline") {
-        if (e.gold > 0) {
-          const text = formatDuration(e.awayMs);
-          const gold = e.gold;
-          const capped = e.capped;
-          openModal(() => offlineHtml(text, gold, capped));
-        }
+        if (ui.result !== null && ui.result.type === "win") ui.result = { ...ui.result, companionId: id };
+        feed(`${content.companionById[id]?.name ?? ""} が相棒になった`);
+        openModal(() => companionJoinHtml(session.game(), content, id));
+      } else if (e.type === "dailyReset") {
+        toast("日付が変わり、日課が入れ替わりました。");
       } else if (e.type === "allClear") {
         feed("すべての面を突破");
         toast("すべての面を突破しました！", "good");
@@ -205,23 +197,53 @@ function start(): void {
         toast("端末の時計が戻っていたので、離れていた時間は0として扱いました。");
       }
     }
-    if (lastStart !== null) showBattle(lastStart, session.game());
+  };
+
+  // --- 戦闘の表示（戦闘中は再生、それ以外は次の面の顔ぶれ） ---
+  let fieldKey = "";
+  const syncField = (): void => {
+    const g = session.game();
+    const name = (key: string): string => fighterName(key, content);
+    const companionName = g.companionSlot === null ? null : (content.companionById[g.companionSlot]?.name ?? null);
+    const rep = session.replay();
+    if (g.battle !== null && rep !== null) {
+      const key = `battle|${rep.stage}|${rep.startedAtMs}`;
+      if (key === fieldKey) return;
+      fieldKey = key;
+      battle.show({
+        stageText: stageLabel(rep.stage, p),
+        boss: isBossStage(rep.stage, p),
+        atMs: rep.startedAtMs,
+        endsAtMs: rep.endsAtMs,
+        replay: rep.replay,
+        allies: rep.allies,
+        enemies: rep.enemies,
+        companionName: rep.companion === null ? null : (content.companionById[rep.companion.key]?.name ?? null),
+        name,
+        gaugeMax: p.battle.gaugeMax,
+        gaugePerAttack: p.battle.gaugePerAttack,
+        timeLimitSec: p.battle.timeLimitSec,
+      });
+      return;
+    }
+    // 戦闘中でも、開き直したあとは再生用のデータがないので、顔ぶれだけ出して結果を待つ
+    const stage = g.battle !== null ? g.battle.stage : nextStage(g, content);
+    const allies = allySpecs(g, content);
+    const key = `preview|${g.battle !== null ? "wait" : ""}|${stage ?? "-"}|${companionName ?? "-"}|${allies.map((a) => `${a.key}:${a.row}:${a.hp}`).join(",")}`;
+    if (key === fieldKey) return;
+    fieldKey = key;
+    battle.preview({
+      stageText: stage === null ? "" : stageLabel(stage, p),
+      boss: stage !== null && isBossStage(stage, p),
+      allies,
+      enemies: stage === null ? [] : enemySpecs(stage, content),
+      companionName,
+      name,
+      banner: g.battle !== null ? "戦闘中…" : undefined,
+    });
   };
 
   // --- 描画 ---
-  let chanceKey = "";
-  const refreshChance = (g: GameData): void => {
-    if (g.challenging) {
-      chanceKey = "";
-      ui.chance = null;
-      return;
-    }
-    const key = `${g.highestCleared}|${g.party.map((id) => (id === null ? "-" : `${id}:${g.members[id]?.level ?? 0}:${g.members[id]?.star ?? 0}`)).join(",")}`;
-    if (key === chanceKey) return;
-    chanceKey = key;
-    ui.chance = winChance(g, content, CHANCE_SAMPLES);
-  };
-
   const lastHtml: Record<string, string> = {};
   const setHtml = (target: HTMLElement, key: string, html: string): void => {
     if (lastHtml[key] === html) return;
@@ -236,14 +258,27 @@ function start(): void {
     }
   };
 
+  /** 時間とともに変わる値を、要素に書き込む（HTML ごとは描き直さない）。 */
+  const applyLive = (root: HTMLElement, values: Record<string, string>): void => {
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>("[data-live]"))) {
+      const v = values[el.dataset["live"] ?? ""];
+      if (v !== undefined && el.textContent !== v) el.textContent = v;
+    }
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>("[data-live-width]"))) {
+      const v = values[el.dataset["liveWidth"] ?? ""];
+      if (v !== undefined && el.style.width !== v) el.style.width = v;
+    }
+  };
+
   let lastGold = -1;
   const render = (): void => {
     const g = session.game();
-    refreshChance(g);
+    const now = session.now();
     ui.saveStatus = !session.canSave() ? "保存しない" : session.lastSaveOk() ? "保存済み" : "保存に失敗";
     ui.speed = session.speed();
 
-    hudStage.textContent = stageLabel(currentStage(g, content), p);
+    const next = nextStage(g, content);
+    hudStage.textContent = next === null ? "達成" : stageLabel(next, p);
     hudGold.textContent = formatNumber(g.gold);
     hudTickets.textContent = String(g.tickets);
     if (lastGold >= 0 && g.gold > lastGold) {
@@ -253,25 +288,32 @@ function start(): void {
     }
     lastGold = g.gold;
 
-    const b = badges(g, content);
+    const b = badges(g, content, now);
     for (const btn of Array.from(tabsEl.querySelectorAll<HTMLElement>(".tab"))) {
       const id = btn.dataset["tab"] as Tab;
       btn.classList.toggle("active", id === ui.tab);
       const badge = btn.querySelector<HTMLElement>(".badge");
       if (badge) badge.hidden = !b[id] || id === ui.tab;
     }
+    otherButton.classList.toggle("active", ui.tab === "other");
 
+    syncField();
     const onJourney = ui.tab === "journey";
     journey.hidden = !onJourney;
     panel.hidden = onJourney;
     if (onJourney) {
-      setHtml(info, "journey", journeyInfoHtml(g, content, ui));
+      setHtml(info, "journey", journeyInfoHtml(g, content, ui, now));
+      applyLive(info, journeyLive(g, content, now));
     } else if (ui.tab === "members") {
       setHtml(panel, "panel", membersHtml(g, content));
     } else if (ui.tab === "party") {
       setHtml(panel, "panel", partyHtml(g, content, ui));
+    } else if (ui.tab === "companions") {
+      setHtml(panel, "panel", companionsHtml(g, content));
     } else if (ui.tab === "recruit") {
       setHtml(panel, "panel", recruitHtml(g, content));
+    } else if (ui.tab === "missions") {
+      setHtml(panel, "panel", missionsHtml(g, content));
     } else {
       setHtml(panel, "panel", otherHtml(g, content, ui, __DEBUG__ ? debugPanelHtml(ui.speed) : ""));
     }
@@ -294,6 +336,24 @@ function start(): void {
     if (reason) toast(reason, "bad");
   };
 
+  /** 達成したミッションと日課を、まとめて受け取る。受け取った件数と、合計を返す。 */
+  const claimAll = (): { count: number; total: RewardAmounts } => {
+    const total: RewardAmounts = { gold: 0, tickets: 0, mats: 0 };
+    let count = 0;
+    for (let guard = 0; guard < 200; guard++) {
+      const g = session.game();
+      const mission = missionList(g, content).find((m) => m.claimable);
+      const daily = mission ? undefined : dailyList(g, content).find((d) => d.claimable);
+      const r = mission ? session.claimMission(mission.def.id) : daily ? session.claimDaily(daily.def.id) : null;
+      if (r === null || !r.ok || !r.reward) break;
+      count += 1;
+      total.gold += r.reward.gold;
+      total.tickets += r.reward.tickets;
+      total.mats += r.reward.mats;
+    }
+    return { count, total };
+  };
+
   const onAction = (el: HTMLElement): void => {
     const action = el.dataset["action"] ?? "";
     const id = el.dataset["id"] ?? "";
@@ -301,17 +361,23 @@ function start(): void {
       case "tab":
         setTab((el.dataset["tab"] ?? "journey") as Tab);
         break;
-      case "retry": {
-        const r = session.retry();
-        if (!r.ok) fail(r.reason);
+      case "goto-members":
+        setTab("members");
+        break;
+      case "challenge": {
+        const r = session.challenge();
+        if (r.ok) ui.result = null;
+        else fail(r.reason);
         break;
       }
-      case "claim":
-      case "claim-close": {
-        const gold = session.game().idleGold;
-        const r = session.claimIdle();
-        if (r.ok) toast(`放置報酬 +${formatNumber(gold)}`, "good");
-        if (action === "claim-close") closeModal();
+      case "collect": {
+        const r = session.collectIdle();
+        if (r.ok) {
+          const mats = Object.entries(r.mats ?? {})
+            .map(([cid, n]) => `${content.companionById[cid]?.material ?? ""} +${n}`)
+            .join("、");
+          toast(`箱から おひねり +${formatNumber(r.gold ?? 0)}${mats ? `、${mats}` : ""}`, "good");
+        } else fail(r.reason);
         break;
       }
       case "levelup": {
@@ -319,9 +385,21 @@ function start(): void {
         if (!r.ok) fail(r.reason);
         break;
       }
+      case "levelmax": {
+        const r = session.levelUpMax(id);
+        if (r.ok) toast(`${content.byId[id]?.name ?? ""} のレベル +${r.levels ?? 0}`, "good");
+        else fail(r.reason);
+        break;
+      }
+      case "train-party": {
+        const r = session.trainParty();
+        if (r.ok) toast(`編成の団員のレベル 合計 +${r.levels ?? 0}`, "good");
+        else fail(r.reason);
+        break;
+      }
       case "promote": {
         const r = session.promote(id);
-        if (r.ok) toast(`${content.byId[id]?.name ?? ""} が昇格！`, "good");
+        if (r.ok) toast(`${content.byId[id]?.name ?? ""} が昇格！（★+1）`, "good");
         else fail(r.reason);
         break;
       }
@@ -355,6 +433,17 @@ function start(): void {
         } else fail(r.reason);
         break;
       }
+      case "recruit-all": {
+        const outcomes: RecruitOutcome[] = [];
+        for (let i = 0; i < RECRUIT_MANY; i++) {
+          const r = session.recruit();
+          if (!r.ok || !r.id) break;
+          outcomes.push({ id: r.id, duplicate: r.duplicate === true });
+        }
+        if (outcomes.length > 0) openModal(() => recruitManyHtml(session.game(), content, outcomes));
+        else fail("勧誘チケットがありません");
+        break;
+      }
       case "place-empty": {
         const slot = firstEmptySlot();
         if (slot !== null) {
@@ -364,10 +453,38 @@ function start(): void {
         closeModal();
         break;
       }
-      case "goto-party":
-        closeModal();
-        setTab("party");
+      case "companion-equip":
+      case "equip-close": {
+        const r = session.setCompanion(id);
+        if (r.ok) toast(`${content.companionById[id]?.name ?? ""} を編成に入れました`, "good");
+        else if (action === "companion-equip") fail(r.reason);
+        if (action === "equip-close") closeModal();
         break;
+      }
+      case "companion-unequip": {
+        const r = session.setCompanion(null);
+        if (!r.ok) fail(r.reason);
+        break;
+      }
+      case "companion-levelup": {
+        const r = session.companionLevelUp(id);
+        if (r.ok) toast(`${content.companionById[id]?.name ?? ""} のレベルが上がりました`, "good");
+        else fail(r.reason);
+        break;
+      }
+      case "claim-mission":
+      case "claim-daily": {
+        const r = action === "claim-mission" ? session.claimMission(id) : session.claimDaily(id);
+        if (r.ok && r.reward) toast(`報酬: ${rewardText(r.reward)}`, "good");
+        else fail(r.reason);
+        break;
+      }
+      case "claim-all": {
+        const r = claimAll();
+        if (r.count > 0) toast(`${r.count}件の報酬: ${rewardText(r.total)}`, "good");
+        else fail("受け取れる報酬がありません");
+        break;
+      }
       case "close-modal":
         closeModal();
         break;
@@ -387,7 +504,11 @@ function start(): void {
         const area = panel.querySelector<HTMLTextAreaElement>('[data-testid="import-area"]');
         const r = session.importSave(area ? area.value : "");
         ui.importMessage = r.ok ? "読み込みました。" : `読み込めませんでした: ${r.reason ?? ""}`;
-        if (r.ok && area) area.value = "";
+        if (r.ok) {
+          if (area) area.value = "";
+          ui.result = null;
+          ui.feed = [];
+        }
         logEvent("import", { ok: r.ok, reason: r.reason ?? "" });
         break;
       }
@@ -399,12 +520,13 @@ function start(): void {
         toast("時間を送りました");
         break;
       case "dbg-grant":
-        session.debugGrant(Number(el.dataset["gold"]), Number(el.dataset["tickets"]));
+        session.debugGrant(Number(el.dataset["gold"]), Number(el.dataset["tickets"]), Number(el.dataset["mats"]));
         break;
       case "dbg-reset":
         if (el.dataset["armed"] === "1") {
           session.debugReset();
           ui.feed = [];
+          ui.result = null;
           ui.exportText = "";
           ui.importMessage = "";
           lastHtml["panel"] = "";
@@ -422,7 +544,7 @@ function start(): void {
       default:
         break;
     }
-    // 操作のあとは、すぐに時間を進めて描き直す（再挑戦の戦闘などを、待たせずに始める）
+    // 操作のあとは、すぐに時間を進めて描き直す
     handle(session.tick());
     render();
   };
@@ -462,6 +584,9 @@ function start(): void {
 
   frame();
   session.save();
+  if (!session.firstRun() && session.awayMs() >= WELCOME_BACK_MS && idlePending(session.game(), session.now(), content).gold > 0) {
+    toast("おかえりなさい。箱に、おひねりが貯まっています。", "good");
+  }
   void requestPersistence().then((granted) => logEvent("persist", { granted: String(granted) }));
 }
 

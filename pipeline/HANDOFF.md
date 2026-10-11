@@ -20,7 +20,8 @@
 | ユーザーの感想と要望 | `feedback/F-*.md`（1件1票）、`feedback/G1.md`（採点表） |
 | 保留にした要望 | `pipeline/BACKLOG.md` |
 | 承認の記録 | `pipeline/APPROVALS.md` |
-| 最初の30分の計算結果 | `pipeline/reports/S2-first30.md` |
+| 最初の30分の計算結果 | 第2版は `pipeline/reports/S3-v2-first30.md`（第1版は `S2-first30.md`） |
+| 第2版の作り（セーブの扱い、画面の構成、数値の作り、宿題） | `pipeline/DECISIONS.md` の D-013、D-014 |
 
 ## 作業のしかた（この環境に特有のこと）
 

@@ -2,9 +2,9 @@
 //
 //   node tests/e2e/run.ts
 //
-// iPhone の大きさの画面で、最初の循環（戦闘 → 勧誘 → 編成 → 稽古 → 負け → 再挑戦 → 保存 → 開き直し →
-// 放置報酬 → セーブの書き出しと読み込み）を通しで操作し、途中でエラーが出ないことを確かめる。
-// 壊れたセーブ、新しすぎるセーブ、S0 のころのセーブで開いた場合と、公開用ビルドも確かめる。
+// iPhone の大きさの画面で、最初の循環（挑戦 → ミッション → 勧誘 → 編成 → 稽古 → 箱 → 負け → 再挑戦 → ボス →
+// 相棒 → 日課 → 保存 → 開き直し → 放置報酬 → セーブの書き出しと読み込み）を通しで操作し、途中でエラーが出ないことを確かめる。
+// 壊れたセーブ、新しすぎるセーブ、S0 のころのセーブ、第1版（build-4 まで）のセーブで開いた場合と、公開用ビルドも確かめる。
 //
 // 終了コード: 0 = 全部通った、1 = 落ちた項目がある、3 = この環境にはブラウザがなく、実行できない
 // 結果: reports/e2e.json、reports/e2e/*.png、pipeline/reports/e2e-last.json（ソースの指紋つき）
@@ -159,56 +159,113 @@ async function setSpeed(page: Page, speed: number): Promise<void> {
 
 // ---------------------------------------------------------------- 本編
 
+const ALL_TABS = ["journey", "members", "party", "companions", "recruit", "missions", "other"];
+
+function num(textValue: string): number {
+  // 「1.23万」のような表示も数に直す
+  const m = /([\d.]+)(万|億)?/.exec(textValue.replace(/,/g, ""));
+  if (!m) return 0;
+  return Number(m[1]) * (m[2] === "万" ? 10_000 : m[2] === "億" ? 100_000_000 : 1);
+}
+
+async function closeModal(page: Page): Promise<void> {
+  await page.waitForTimeout(500);
+  await page.locator(tid("modal-close")).click();
+  await page.waitForSelector(tid("modal"), { state: "detached" });
+}
+
+/** 挑戦のボタンを、押せるときに押し続ける。done が true を返したら終わる。 */
+async function challengeUntil(page: Page, done: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await done()) return;
+    const b = page.locator(`${tid("challenge-button")}:not([disabled])`);
+    if ((await b.count()) > 0) await b.click({ timeout: 1000 }).catch(() => undefined);
+    await page.waitForTimeout(120);
+  }
+  throw new Error(`時間内に終わらなかった: ${what}`);
+}
+
+async function grant(page: Page, testid: string, times: number): Promise<void> {
+  await tab(page, "other");
+  for (let i = 0; i < times; i++) await page.locator(tid(testid)).click();
+}
+
 async function mainFlow(browser: Browser, url: string): Promise<void> {
   const { ctx, page, errors } = await open(browser, url);
 
-  await step("開くと 1-1 の戦闘が始まり、団員3人が並ぶ", async () => {
-    expect((await text(page, "hud-stage")) === "1-1", `いまの面が ${await text(page, "hud-stage")}`);
+  await step("開くと、団員3人と 1-1 の敵が並ぶ。「挑戦」を押すまでは戦わない", async () => {
+    expect((await text(page, "hud-stage")) === "1-1", `次の面が ${await text(page, "hud-stage")}`);
     await page.waitForSelector(tid("unit-0-2"));
     expect((await page.locator('.frow[data-side="0"] .unit').count()) === 3, "味方が3人ではない");
     expect((await page.locator('.frow[data-side="1"] .unit').count()) >= 1, "敵がいない");
-    expect((await text(page, "status-text")).includes("挑戦中"), "挑戦中と出ていない");
+    expect((await text(page, "challenge-button")).includes("1-1 に挑戦"), "「1-1 に挑戦」のボタンがない");
+    await page.waitForTimeout(2500);
+    expect((await text(page, "hud-stage")) === "1-1" && (await page.locator(tid("result-win")).count()) === 0, "押していないのに進んだ");
+    expect(Number(((await savedGame(page))?.["stats"] as { battles?: number } | undefined)?.battles ?? -1) === 0, "押していないのに戦闘が始まった");
     await shot(page, "01-start");
   });
 
-  await step("画面が横にはみ出さず、押す場所が44px以上ある", async () => {
-    const m = await page.evaluate(() => {
-      const small: string[] = [];
-      for (const el of Array.from(document.querySelectorAll<HTMLElement>("button"))) {
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
-        if (r.height < 43.5 && !el.classList.contains("dbg-chip") && !el.classList.contains("member-main") && !el.classList.contains("notice")) {
-          small.push(`${el.dataset["testid"] ?? el.textContent ?? ""}:${Math.round(r.height)}`);
+  await step("どの画面も横にはみ出さず、押す場所が44px以上ある", async () => {
+    for (const name of ALL_TABS) {
+      await tab(page, name);
+      const m = await page.evaluate(() => {
+        const small: string[] = [];
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("button"))) {
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          if (r.height < 43.5 && !el.classList.contains("dbg-chip") && !el.classList.contains("member-main") && !el.classList.contains("notice")) {
+            small.push(`${el.dataset["testid"] ?? el.textContent ?? ""}:${Math.round(r.height)}`);
+          }
         }
-      }
-      const tabs = document.getElementById("tabs")?.getBoundingClientRect();
-      return { scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth, innerH: window.innerHeight, tabsBottom: tabs?.bottom ?? -1, small };
-    });
-    expect(m.scrollW <= m.innerW, `横にはみ出している（${m.scrollW} > ${m.innerW}）`);
-    expect(m.tabsBottom <= m.innerH + 0.5, "下のタブが画面の外に出ている");
-    expect(m.small.length === 0, `小さいボタンがある: ${m.small.join(", ")}`);
+        const tabs = document.getElementById("tabs")?.getBoundingClientRect();
+        const labels = Array.from(document.querySelectorAll<HTMLElement>("#tabs .tab")).filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent ?? "");
+        return { scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth, innerH: window.innerHeight, tabsBottom: tabs?.bottom ?? -1, small, labels };
+      });
+      expect(m.scrollW <= m.innerW, `${name}: 横にはみ出している（${m.scrollW} > ${m.innerW}）`);
+      expect(m.tabsBottom <= m.innerH + 0.5, `${name}: 下のタブが画面の外に出ている`);
+      expect(m.small.length === 0, `${name}: 小さいボタンがある: ${m.small.join(", ")}`);
+      expect(m.labels.length === 0, `${name}: タブの文字が切れている: ${m.labels.join(", ")}`);
+    }
+    await tab(page, "journey");
   });
 
-  await step("戦闘に勝つと、おひねりが増えて次の面へ進む", async () => {
-    await setSpeed(page, SPEED);
-    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "") !== "1-1", tid("hud-stage"), { timeout: 30_000 });
-    expect(Number((await text(page, "hud-gold")).replace(/[^\d]/g, "")) > 0, "おひねりが増えていない");
+  await step("挑戦すると戦闘が始まり、勝つと初クリア報酬が入る。自動では次へ進まない", async () => {
+    await page.locator(tid("challenge-button")).click();
+    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("戦闘中"), tid("status-text"), { timeout: 5_000 });
+    expect(await page.locator(tid("challenge-button")).isDisabled(), "戦闘中なのに、挑戦のボタンが押せる");
+    await page.waitForTimeout(4000);
+    await shot(page, "02-battle");
+    await page.waitForSelector(tid("result-win"), { timeout: 90_000 });
+    expect((await text(page, "result-win")).includes("1-1 を突破"), "突破したと出ていない");
+    expect(num(await text(page, "hud-gold")) > 0, "初クリア報酬のおひねりが入っていない");
+    expect((await text(page, "hud-stage")) === "1-2", "次の面が 1-2 になっていない");
+    await page.waitForTimeout(3000);
+    expect((await text(page, "challenge-button")).includes("次の面（1-2）に挑戦"), "次の面に挑戦するボタンが出ていない");
+    expect(Number(((await savedGame(page))?.["stats"] as { battles?: number } | undefined)?.battles ?? -1) === 1, "勝ったあと、勝手に次の戦闘が始まった");
+    await shot(page, "03-win");
   });
 
-  await step("チケットが届き、勧誘すると回復役が来て、編成の空きに入れられる", async () => {
-    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") >= 1, tid("hud-tickets"), { timeout: 60_000 });
+  await step("ミッションの報酬で勧誘チケットをもらい、勧誘すると回復役が来て、編成の空きに入れられる", async () => {
+    expect((await text(page, "goal-mission")).includes("達成"), "旅の画面に、ミッションの達成が出ていない");
+    await page.locator(tid("goal-mission")).click();
+    await page.waitForSelector(tid("claim-clear-1"));
+    await shot(page, "04-missions");
+    await page.locator(tid("claim-clear-1")).click();
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") === 1, tid("hud-tickets"), { timeout: 5_000 });
     await tab(page, "recruit");
-    await shot(page, "02-recruit");
+    await shot(page, "05-recruit");
     await page.locator(tid("recruit-button")).click();
     await page.waitForSelector(tid("recruit-result"));
     expect((await text(page, "modal")).includes("衣装係"), "最初の勧誘が衣装係ではない");
-    await shot(page, "03-recruit-result");
+    await shot(page, "06-recruit-result");
     await page.waitForTimeout(500);
     await page.locator(tid("place-empty")).click();
     await page.waitForSelector(tid("modal"), { state: "detached" });
     await tab(page, "party");
     expect(!(await text(page, "slot-3")).includes("空き"), "4つ目の枠が空いたまま");
-    await shot(page, "04-party");
+    expect((await text(page, "slot-companion")).includes("まだいません"), "相棒の枠の案内が出ていない");
+    await shot(page, "07-party");
   });
 
   await step("編成: 枠を選んで団員を入れると、入れ替わる", async () => {
@@ -227,91 +284,153 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     expect((await text(page, "slot-0")).includes("大道具係"), "元に戻せていない");
   });
 
-  await step("団員: 稽古でレベルが上がり、おひねりが減る", async () => {
+  await step("団員: 「稽古」で1つ、「まとめて」と「編成をまとめて稽古」で、上げられるだけ上がる", async () => {
     await tab(page, "members");
-    await page.waitForSelector(`${tid("levelup-h_star")}:not([disabled])`, { timeout: 60_000 });
-    const before = Number(await text(page, "member-level-h_star"));
+    await page.waitForSelector(`${tid("levelup-h_star")}:not([disabled])`, { timeout: 10_000 });
     await page.locator(tid("levelup-h_star")).click();
-    await page.waitForFunction((args) => Number(document.querySelector(args.sel)?.textContent ?? "0") === args.want, { sel: tid("member-level-h_star"), want: before + 1 });
-    await page.locator(tid("detail-h_star")).click();
-    expect((await text(page, "modal")).includes("強打") || (await text(page, "modal")).includes("ダメージ"), "くわしい能力が出ていない");
-    await shot(page, "05-member-detail");
-    await page.waitForTimeout(500);
-    await page.locator(tid("modal-close")).click();
-    await shot(page, "06-members");
-  });
-
-  await step("負けると進行が止まり、勝てる見込みと再挑戦が出る", async () => {
-    await tab(page, "journey");
-    await page.waitForSelector(tid("retry-button"), { timeout: 120_000 });
-    await page.waitForFunction((sel) => /\d+%/.test(document.querySelector(sel)?.textContent ?? ""), tid("win-chance"), { timeout: 10_000 });
-    expect((await text(page, "status-text")).includes("負けました"), "負けたと出ていない");
-    expect((await text(page, "status-text")).includes("稽古が足りない"), "「稽古が足りない」と出ていない");
-    expect((await text(page, "hint")) !== "", "次にやることの案内が出ていない");
-    await setSpeed(page, 1);
-    await shot(page, "07-stopped");
-    return `見込み: ${await text(page, "win-chance")}`;
-  });
-
-  /** 編成の4人のレベルを、押せるだけ上げる（途中でポップアップが出たら、そこでやめる）。 */
-  const train = async (rounds: number): Promise<void> => {
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") === 2, tid("member-level-h_star"));
+    await page.locator(tid("train-party")).click();
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") >= 2, tid("member-level-h_costume"));
+    expect(await page.locator(tid("train-party")).isDisabled(), "おひねりを使い切ったのに、まだ稽古できる");
+    expect(await page.locator(tid("levelmax-h_stagehand")).isDisabled(), "おひねりがないのに、まとめて上げられる");
+    // ミッション「勧誘を1回する」の報酬（おひねり）を受け取って、1人をまとめて上げる
+    await tab(page, "missions");
+    await page.locator(tid("claim-recruit-1")).click();
     await tab(page, "members");
-    for (let round = 0; round < rounds; round++) {
-      for (const id of ["h_stagehand", "h_star", "h_sword", "h_costume"]) {
-        if ((await page.locator(tid("modal")).count()) > 0) return;
-        const b = page.locator(`${tid(`levelup-${id}`)}:not([disabled])`);
-        if ((await b.count()) > 0) await b.click({ timeout: 1500 }).catch(() => undefined);
-      }
-    }
-  };
-
-  await step("育ててから再挑戦すると、また挑む", async () => {
-    await tab(page, "other");
-    for (let i = 0; i < 2; i++) await page.locator(tid("dbg-gold")).click();
-    await train(4);
-    await tab(page, "journey");
-    await page.waitForFunction((sel) => /\d+%/.test(document.querySelector(sel)?.textContent ?? ""), tid("win-chance"), { timeout: 10_000 });
-    const chance = await text(page, "win-chance");
-    await page.locator(tid("retry-button")).click();
-    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("挑戦中"), tid("status-text"), { timeout: 5_000 });
-    expect((await page.locator(tid("retry-button")).count()) === 0, "挑戦中なのに、再挑戦のボタンが残っている");
-    return `育てたあとの${chance}`;
+    const level = Number(await text(page, "member-level-h_stagehand"));
+    await page.locator(tid("levelmax-h_stagehand")).click();
+    await page.waitForFunction((args) => Number(document.querySelector(args.sel)?.textContent ?? "0") >= args.want, { sel: tid("member-level-h_stagehand"), want: level + 2 });
+    await page.locator(tid("detail-h_star")).click();
+    expect((await text(page, "modal")).includes("ダメージ"), "くわしい能力が出ていない");
+    await shot(page, "08-member-detail");
+    await closeModal(page);
+    await shot(page, "09-members");
   });
 
-  await step("ボスを倒すと、入団の知らせが出て、編成に入れられる", async () => {
-    await tab(page, "other");
-    for (let i = 0; i < 12; i++) await page.locator(tid("dbg-gold")).click();
-    await train(14);
-    if ((await page.locator(tid("modal")).count()) === 0) {
-      await setSpeed(page, SPEED);
-      // 負けて止まったら再挑戦を押しながら、入団の知らせが出るまで進める
-      const deadline = Date.now() + 120_000;
-      while (Date.now() < deadline && (await page.locator(tid("join-result")).count()) === 0) {
-        const retry = page.locator(tid("retry-button"));
-        if ((await retry.count()) > 0) await retry.click({ timeout: 1000 }).catch(() => undefined);
-        await page.waitForTimeout(250);
-      }
-    }
-    await page.waitForSelector(tid("join-result"), { timeout: 1_000 });
-    expect((await text(page, "modal")).includes("もりのくま"), "入団したのが もりのくま ではない");
-    await shot(page, "08-join");
-    await page.waitForTimeout(500);
-    await page.locator(tid("goto-party")).click();
-    await page.waitForSelector(tid("modal"), { state: "detached" });
-    expect((await page.locator(tid("place-m_bear")).count()) === 1, "入団した魔物が編成の一覧にいない");
-    await page.locator(tid("slot-3")).click();
-    await page.locator(tid("place-m_bear")).click();
-    expect((await text(page, "slot-3")).includes("もりのくま"), "入団した魔物を編成に入れられない");
-    expect((await text(page, "slot-3")).includes("Lv 1"), "入団した魔物がレベル1ではない");
+  await step("箱: おひねりが時間でたまっていて、受け取れる", async () => {
+    await tab(page, "journey");
+    await page.waitForFunction((sel) => Number((document.querySelector(sel)?.textContent ?? "0").replace(/[^\d]/g, "")) > 0, tid("idle-gold"), { timeout: 5_000 });
+    const a = num(await text(page, "idle-gold"));
+    await page.waitForTimeout(2200);
+    const b = num(await text(page, "idle-gold"));
+    expect(b > a, `開いている間に、箱が増えていない（${a} → ${b}）`);
+    const gold = num(await text(page, "hud-gold"));
+    await page.locator(tid("idle-claim")).click();
+    await page.waitForFunction((args) => Number((document.querySelector(args.sel)?.textContent ?? "0").replace(/[^\d]/g, "")) > args.gold, { sel: tid("hud-gold"), gold }, { timeout: 5_000 });
+    expect(Number(((await savedGame(page))?.["counters"] as { idleClaims?: number } | undefined)?.idleClaims ?? 0) === 1, "受け取った回数が記録されていない");
+    return `箱: ${a} → ${b}`;
+  });
+
+  await step("負けると「稽古が足りない！」と出て、団員の稽古の画面へ行ける。勝てる見込みは出さない", async () => {
+    await setSpeed(page, SPEED);
+    await challengeUntil(
+      page,
+      async () => {
+        // 育てずに進めて、もしボスまで倒せてしまったら、知らせを閉じて続ける
+        if ((await page.locator(tid("companion-result")).count()) > 0) await closeModal(page);
+        return (await page.locator(tid("result-defeat")).count()) > 0;
+      },
+      180_000,
+      "育てずに挑み続けて、負ける",
+    );
     await setSpeed(page, 1);
+    const card = await text(page, "result-defeat");
+    expect(card.includes("稽古が足りない！"), "「稽古が足りない！」と出ていない");
+    expect((await text(page, "challenge-button")).includes("もう一度"), "もう一度挑戦するボタンが出ていない");
+    expect(!(await page.locator("body").innerText()).includes("勝てる見込み"), "勝てる見込みが出ている");
+    await shot(page, "10-defeat");
+    const stage = await text(page, "hud-stage");
+    await page.waitForTimeout(3000);
+    expect((await text(page, "hud-stage")) === stage && !(await page.locator(tid("challenge-button")).isDisabled()), "勝手に再挑戦が始まった");
+    await page.locator(tid("goto-train")).click();
+    await page.waitForSelector(tid("train-party"));
+    return `負けた面: ${stage}`;
+  });
+
+  await step("稽古してから、もう一度挑むと勝てる", async () => {
+    const stage = await text(page, "hud-stage");
+    await grant(page, "dbg-gold-big", 2);
+    await tab(page, "members");
+    await page.locator(tid("train-party")).click();
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") >= 20, tid("member-level-h_star"));
+    await setSpeed(page, SPEED);
+    await page.locator(tid("challenge-button")).click();
+    await page.waitForSelector(tid("result-win"), { timeout: 30_000 });
+    expect((await text(page, "result-win")).includes(`${stage} を突破`), `${stage} を突破できていない`);
+  });
+
+  await step("ボスを倒すと相棒になり、編成に入れると、戦闘の画面に出る", async () => {
+    await challengeUntil(page, async () => (await page.locator(tid("companion-result")).count()) > 0 || (await page.locator(tid("companion-row-c_bear")).count()) > 0, 120_000, "1-10 のボスを倒す");
+    if ((await page.locator(tid("companion-result")).count()) > 0) {
+      expect((await text(page, "modal")).includes("もりのくま"), "相棒になったのが もりのくま ではない");
+      await shot(page, "11-companion-join");
+      await page.waitForTimeout(500);
+      await page.locator(tid("equip-companion")).click();
+      await page.waitForSelector(tid("modal"), { state: "detached" });
+    } else {
+      // 前の手順で、すでに相棒になっていた場合（知らせは閉じてある）
+      await tab(page, "companions");
+      await page.locator(tid("companion-equip-c_bear")).click();
+    }
+    await setSpeed(page, 1);
+    expect((await text(page, "battle-companion")).includes("もりのくま"), "戦闘の画面に、相棒が出ていない");
+    await tab(page, "members");
+    expect((await page.locator(tid("member-row-c_bear")).count()) === 0, "相棒が、団員の一覧に入っている");
+    await tab(page, "party");
+    expect((await text(page, "slot-companion")).includes("もりのくま"), "編成の相棒の枠に入っていない");
+    await tab(page, "companions");
+    expect((await text(page, "companion-row-c_bear")).includes("編成中"), "相棒の画面で、編成中になっていない");
+    expect((await text(page, "companion-total")).includes("体力 +2%"), "底上げの合計が出ていない");
+    await shot(page, "12-companions");
+  });
+
+  await step("相棒: 専用の素材とおひねりで、レベルが上がり、底上げが伸びる", async () => {
+    expect(await page.locator(tid("companion-levelup-c_bear")).isDisabled(), "素材がないのに、レベルを上げられる");
+    await grant(page, "dbg-gold-big", 1);
+    await grant(page, "dbg-mats", 1);
+    await tab(page, "companions");
+    await page.locator(tid("companion-levelup-c_bear")).click();
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") === 2, tid("companion-level-c_bear"));
+    expect((await text(page, "companion-total")).includes("体力 +4%"), "レベルを上げても、底上げが伸びていない");
+    await page.locator(tid("companion-unequip-c_bear")).click();
+    await page.waitForSelector(tid("companion-equip-c_bear"));
+    expect((await text(page, "companion-total")).includes("体力 +4%"), "編成から外すと、底上げが消えた");
+    await page.locator(tid("companion-equip-c_bear")).click();
+    await page.waitForSelector(tid("companion-unequip-c_bear"));
+  });
+
+  await step("まとめて勧誘すると、結果が一覧で出る", async () => {
+    await grant(page, "dbg-ticket", 5);
+    await tab(page, "recruit");
+    const tickets = Number(await text(page, "recruit-tickets"));
+    expect(tickets >= 5, `チケットが ${tickets}枚`);
+    await page.locator(tid("recruit-all")).click();
+    await page.waitForSelector(tid("recruit-many-result"));
+    expect((await page.locator(`${tid("modal")} .rates li`).count()) === Math.min(10, tickets), "結果の行数が、使った枚数と合わない");
+    await shot(page, "13-recruit-many");
+    await closeModal(page);
+    expect(Number(await text(page, "recruit-tickets")) === tickets - Math.min(10, tickets), "チケットが減っていない");
+  });
+
+  await step("ミッションと日課: 達成したものを、まとめて受け取れる", async () => {
+    await tab(page, "missions");
+    await shot(page, "14-missions");
+    expect((await text(page, "daily-list")).includes("受け取る"), "達成した日課がない");
+    const tickets = Number(await text(page, "hud-tickets"));
+    await page.locator(tid("claim-all")).click();
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLButtonElement | null)?.disabled === true, tid("claim-all"), { timeout: 5_000 });
+    expect(Number(await text(page, "hud-tickets")) > tickets, "報酬の勧誘チケットが入っていない");
+    expect((await text(page, "daily-list")).includes("受け取り済み"), "日課が受け取り済みになっていない");
+    expect((await page.locator(`${tid("mission-list")} button`).count()) === 0, "受け取れるミッションが残っている");
+    await tab(page, "journey");
+    await page.waitForTimeout(300);
+    await shot(page, "15-journey");
   });
 
   let before: Record<string, unknown> | null = null;
   await step("開き直しても、進み具合が残っている", async () => {
     await tab(page, "members");
     const level = await text(page, "member-level-h_star");
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await page.waitForTimeout(300);
     before = await savedGame(page);
     expect(before !== null, "セーブが保存されていない");
     await page.reload();
@@ -319,35 +438,48 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await tab(page, "members");
     expect((await text(page, "member-level-h_star")) === level, "団員のレベルが残っていない");
     const after = await savedGame(page);
-    expect(Number(after?.["highestCleared"]) >= Number(before?.["highestCleared"]), "突破した面が減っている");
-    expect((await page.locator(tid("member-row-m_bear")).count()) === 1, "入団した魔物がいなくなっている");
+    expect(Number(after?.["highestCleared"]) === Number(before?.["highestCleared"]), "突破した面が変わっている");
+    await tab(page, "companions");
+    expect((await text(page, "companion-level-c_bear")) === "2", "相棒のレベルが残っていない");
+    expect((await text(page, "companion-row-c_bear")).includes("編成中"), "相棒の編成が残っていない");
     return `突破 ${String(after?.["highestCleared"])}面、花形役者 Lv${level}`;
   });
 
-  await step("時間がたってから開くと、放置報酬が出て、受け取れる", async () => {
-    await tab(page, "other");
-    await page.locator(tid("dbg-time-1h")).click();
-    await page.waitForSelector(tid("offline-result"), { timeout: 5_000 });
-    expect((await text(page, "modal")).includes("1時間"), "離れていた時間が出ていない");
-    await shot(page, "09-offline");
-    const goldBefore = Number((await savedGame(page))?.["gold"] ?? 0);
-    await page.waitForTimeout(500);
-    await page.locator(tid("offline-claim")).click();
-    await page.waitForSelector(tid("modal"), { state: "detached" });
+  await step("時間がたつと、箱におひねりと相棒の素材が貯まり、受け取れる", async () => {
+    await tab(page, "journey");
+    await page.locator(tid("idle-claim")).click();
+    await grant(page, "dbg-time-1h", 1);
+    await tab(page, "journey");
+    await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") >= 6, tid("idle-mats-c_bear"), { timeout: 5_000 });
+    expect((await text(page, "idle-box")).includes("はちみつ"), "箱に、相棒の素材の名前が出ていない");
+    expect((await page.locator(tid("idle-capped")).count()) === 0, "1時間で、いっぱいになっている");
+    await shot(page, "16-box");
+    const g0 = await savedGame(page);
+    await page.locator(tid("idle-claim")).click();
     await page.waitForTimeout(300);
-    const g = await savedGame(page);
-    expect(Number(g?.["gold"]) > goldBefore, "受け取っても、おひねりが増えていない");
-    expect(Number(g?.["idleGold"]) === 0, "放置報酬が残っている");
+    const g1 = await savedGame(page);
+    expect(Number(g1?.["gold"]) > Number(g0?.["gold"]), "受け取っても、おひねりが増えていない");
+    expect(Number((g1?.["materials"] as Record<string, number> | undefined)?.["c_bear"]) >= Number((g0?.["materials"] as Record<string, number> | undefined)?.["c_bear"]) + 6, "受け取っても、相棒の素材が増えていない");
   });
 
-  await step("放置報酬は、上限（8時間ぶん）で頭打ちになる", async () => {
-    await tab(page, "other");
-    await page.locator(tid("dbg-time-10h")).click();
-    await page.waitForSelector(tid("offline-result"), { timeout: 5_000 });
-    expect((await text(page, "modal")).includes("上限"), "上限まで貯まったことが出ていない");
-    await page.waitForTimeout(500);
-    await page.locator(tid("offline-claim")).click();
-    await page.waitForSelector(tid("modal"), { state: "detached" });
+  await step("箱は、上限（8時間ぶん）でいっぱいになる", async () => {
+    await grant(page, "dbg-time-10h", 1);
+    await tab(page, "journey");
+    await page.waitForSelector(tid("idle-capped"), { timeout: 5_000 });
+    const a = await text(page, "idle-gold");
+    await page.waitForTimeout(2200);
+    expect((await text(page, "idle-gold")) === a, "いっぱいなのに、増え続けている");
+    expect((await text(page, "idle-mats-c_bear")) === "48", `8時間ぶんの素材は48のはず: ${await text(page, "idle-mats-c_bear")}`);
+    await shot(page, "17-box-full");
+    await page.locator(tid("idle-claim")).click();
+    await page.waitForSelector(tid("idle-capped"), { state: "detached" });
+  });
+
+  await step("日付が変わると、日課が入れ替わる", async () => {
+    await grant(page, "dbg-time-1d", 1);
+    await tab(page, "missions");
+    await page.waitForFunction((sel) => !(document.querySelector(sel)?.textContent ?? "").includes("受け取り済み"), tid("daily-list"), { timeout: 5_000 });
+    expect((await text(page, "mission-list")) !== "", "ミッションの一覧が消えた");
   });
 
   await step("セーブの書き出しと読み込みができ、壊れた文字は読み込まない", async () => {
@@ -361,13 +493,13 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await page.locator(tid("import-area")).fill(exported);
     await page.locator(tid("import-button")).click();
     expect((await text(page, "import-message")) === "読み込みました。", `読み込めていない: ${await text(page, "import-message")}`);
-    await shot(page, "10-other");
+    await shot(page, "18-other");
   });
 
   await step("ログに、プレイの記録が入っている", async () => {
     await page.locator(tid("debug-log-button")).click();
     const report = await page.locator(tid("debug-report")).inputValue();
-    for (const word of ["プレイの記録", "遊んだ時間", "操作の内訳", "を突破", "デバッグ機能の使用: あり", "--- エラー (0件) ---"]) {
+    for (const word of ["プレイの記録", "遊んだ時間", "操作の内訳", "を突破", "で負け", "再挑戦:", "箱から受け取り", "ミッション達成", "もりのくま が相棒になる", "デバッグ機能の使用: あり", "--- エラー (0件) ---"]) {
       expect(report.includes(word), `ログに「${word}」がない`);
     }
     await page.locator(".dbg-sheet button.ghost").click();
@@ -398,7 +530,9 @@ async function specialSaves(browser: Browser, url: string): Promise<void> {
     const tooNew = JSON.stringify({ format: "idle-game-save", version: 99, savedAtMs: 1, state: {} });
     const { ctx, page, errors } = await open(browser, url, tooNew);
     expect((await text(page, "notice")).includes("新しい版"), "新しい版だと伝えていない");
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    // 箱に少し貯まるのを待ってから受け取る（操作のたびに保存が走るので、それでも上書きしないことを見る）
+    await page.waitForTimeout(1500);
+    await page.locator(tid("idle-claim")).click();
     await page.waitForTimeout(400);
     expect((await page.evaluate(() => localStorage.getItem("idle-game.save"))) === tooNew, "新しい版のセーブを上書きしてしまった");
     expect(errors.length === 0, errors.join(" | "));
@@ -409,11 +543,29 @@ async function specialSaves(browser: Browser, url: string): Promise<void> {
     const old = JSON.stringify({ format: "idle-game-save", version: 1, savedAtMs: 1760100000000, state: { version: 1, createdAtMs: 1760000000000, lastSeenAtMs: 1760100000000, opens: 6, taps: 10, rngState: 12345 } });
     const { ctx, page, errors } = await open(browser, url, old);
     expect((await text(page, "hud-stage")) === "1-1", "1-1 から始まっていない");
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     await page.waitForTimeout(400);
     const state = await page.evaluate(() => (JSON.parse(localStorage.getItem("idle-game.save") ?? "{}") as { state?: { opens?: number; game?: unknown } }).state);
     expect(state?.opens === 7, `起動の回数が ${String(state?.opens)}`);
     expect(state?.game !== undefined, "ゲームの状態が保存されていない");
+    expect(errors.length === 0, errors.join(" | "));
+    await ctx.close();
+  });
+
+  await step("第1版（build-4 まで）のセーブ: 退避して、最初からになったと伝える", async () => {
+    // 2026-10-11 に、ユーザーの iPhone から届いた build-4 のログにあったセーブそのもの
+    const v1 = readFileSync(path.join(SRC_ROOT, "tests/fixtures/save-build-4.json"), "utf8").trim();
+    const { ctx, page, errors } = await open(browser, url, v1);
+    const notice = await text(page, "notice");
+    expect(notice.includes("最初から") && notice.includes("退避"), `知らせ: ${notice}`);
+    expect((await text(page, "hud-stage")) === "1-1", "最初から始まっていない");
+    expect((await text(page, "hud-gold")) === "0", "前の版のおひねりが残っている");
+    const backups = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.includes("backup")).map((k) => localStorage.getItem(k)));
+    expect(backups.includes(v1), "前の版のセーブが退避されていない");
+    await page.waitForTimeout(400);
+    const game = await savedGame(page);
+    expect(game?.["v"] === 2 && Number(game?.["highestCleared"]) === 0, "新しい作りのゲームとして保存されていない");
+    await page.locator(tid("notice")).click();
+    expect((await page.locator(tid("notice")).isVisible()) === false, "知らせを閉じられない");
     expect(errors.length === 0, errors.join(" | "));
     await ctx.close();
   });
@@ -424,11 +576,11 @@ async function specialSaves(browser: Browser, url: string): Promise<void> {
 async function releaseBuild(browser: Browser): Promise<void> {
   const dir = mkdtempSync(path.join(os.tmpdir(), "idle-release-"));
   try {
-    await step("公開用ビルド: 確認用の機能が入っておらず、ゲームは動く", async () => {
+    await step("公開用ビルド: 確認用の機能が入っておらず、挑戦して勝てる", async () => {
       const built = runNode(["scripts/build.ts", "--release", "--out", dir]);
       expect(built.code === 0, `公開用ビルドに失敗: ${built.err.slice(0, 200)}`);
       const js = readFileSync(path.join(dir, "app.js"), "utf8");
-      expect(!js.includes("dbg-sheet") && !js.includes("debug-log-button"), "公開用ビルドに、ログの機能が入っている");
+      expect(!js.includes("dbg-sheet") && !js.includes("debug-log-button") && !js.includes("dbg-gold"), "公開用ビルドに、確認用の機能が入っている");
       const { server, url } = await serve(dir);
       try {
         const { ctx, page, errors } = await open(browser, url);
@@ -436,6 +588,10 @@ async function releaseBuild(browser: Browser): Promise<void> {
         expect((await page.locator(tid("debug-log-button")).count()) === 0, "ログのボタンが出ている");
         await tab(page, "other");
         expect((await page.locator(tid("debug-panel")).count()) === 0, "確認用の機能が出ている");
+        expect((await text(page, "chapters")).includes("第1章"), "旅の記録が出ていない");
+        await tab(page, "journey");
+        await page.locator(tid("challenge-button")).click();
+        await page.waitForSelector(tid("result-win"), { timeout: 90_000 });
         expect(errors.length === 0, errors.join(" | "));
         await ctx.close();
       } finally {

@@ -3,50 +3,49 @@
     "timeLimitSec": 60,
     "gaugeMax": 100,
     "gaugePerAttack": 34,
-    "damageVariance": 0.1,
-    "interBattleSec": 3,
-    "stageIntroSec": 5,
-    "rallySec": 8
+    "damageVariance": 0.06,
+    "rallySec": 8,
+    "introSec": 2.5,
+    "resultSec": 2
   },
   "member": {
     "baseHp": 120,
     "baseAtk": 12,
     "levelGrowth": 0.08,
-    "starBonus": 0.2,
+    "starBonus": 0.1,
     "levelCapBase": 40,
     "levelCapPerStar": 10,
-    "levelCostBase": 20,
-    "levelCostGrowth": 1.09,
+    "levelCostBase": 10,
+    "levelCostGrowth": 1.25,
     "shardsToPromote": [2, 3, 5, 8]
   },
   "enemy": {
-    "baseHp": 100,
-    "baseAtk": 14,
-    "stageGrowth": 1.105,
-    "chapterHpMult": [1.25],
+    "baseHp": 160,
+    "baseAtk": 14.5,
+    "stageGrowth": [
+      1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16,
+      1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09, 1.09,
+      1.22, 1.07, 1.07, 1.07, 1.07, 1.34, 1.34, 1.34, 1.34, 1.34,
+      1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05
+    ],
+    "chapterHpMult": [1.3],
     "chapterAtkMult": [0.62],
     "count": 3,
     "intervalSec": 1.6,
-    "bossHpMult": 4.2,
-    "bossAtkMult": 1.8,
+    "bossHpMult": 4.1,
+    "bossAtkMult": 1.5,
     "bossIntervalSec": 2,
     "bossSkillPower": 0.9
   },
   "economy": {
-    "goldPerWinBase": 10,
-    "goldGrowth": 1.115,
-    "bossGoldMult": 3,
-    "offlineWinsPerMin": 1.5,
+    "idleGoldBase": 420,
+    "idleGoldGrowth": 1.1,
     "idleCapHours": 8,
-    "ticketEveryStages": 3,
-    "monsterShardOffset": 5
+    "firstClearMinutes": [0.5],
+    "ticketStages": [],
+    "firstClearMats": 1
   },
-  "progress": {
-    "chapters": 4,
-    "stagesPerChapter": 10,
-    "onlineGapSec": 30
-  },
-  "recruit": {
-    "firstId": "h_costume"
-  }
+  "companion": {"levelCap": 30, "costMinutesBase": 3, "costMinutesGrowth": 1.15, "matBase": 5, "matGrowth": 1.25, "matPerHour": 6, "skillGrowth": 0.08},
+  "progress": {"chapters": 4, "stagesPerChapter": 10},
+  "recruit": {"firstId": "h_costume", "rarities": {"R": {"label": "ふつう", "weight": 1, "statMult": 1}}}
 }

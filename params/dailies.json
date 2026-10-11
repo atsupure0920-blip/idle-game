@@ -1,0 +1,6 @@
+[
+  { "id": "d-idle", "text": "箱からおひねりを受け取る", "kind": "idleClaims", "target": 1, "reward": { "goldMin": 10 } },
+  { "id": "d-challenge", "text": "3回挑戦する", "kind": "challenges", "target": 3, "reward": { "goldMin": 10 } },
+  { "id": "d-train", "text": "団員のレベルを10回上げる", "kind": "levelUps", "target": 10, "reward": { "mats": 3 } },
+  { "id": "d-all", "text": "日課を3つ達成する", "kind": "dailyClaims", "target": 3, "reward": { "tickets": 1 } }
+]

@@ -8,11 +8,11 @@ import { build } from "esbuild";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { currentBuildId } from "./lib/env.ts";
+import { readContentData } from "./lib/content.ts";
 
 const release = process.argv.includes("--release");
-// 数値と団員の定義は、ビルド時に画面のコードへ埋め込む（読み込みの失敗が起きないように）。
-const params = JSON.parse(await readFile("params/base.json", "utf8")) as unknown;
-const members = JSON.parse(await readFile("params/members.json", "utf8")) as unknown;
+// 数値と定義（params/*.json）は、ビルド時に画面のコードへ埋め込む（読み込みの失敗が起きないように）。
+const contentData = readContentData(".");
 // 出力先。ふだんは dist/。通し操作テストが公開用ビルドを別の場所に作るときだけ、--out で変える。
 const outArg = process.argv.indexOf("--out");
 const outDir = outArg >= 0 && process.argv[outArg + 1] ? (process.argv[outArg + 1] as string) : "dist";
@@ -32,8 +32,7 @@ await build({
   define: {
     __BUILD_ID__: JSON.stringify(buildId),
     __DEBUG__: release ? "false" : "true",
-    __PARAMS__: JSON.stringify(params),
-    __MEMBERS__: JSON.stringify(members),
+    __CONTENT__: JSON.stringify(contentData),
   },
   logLevel: "warning",
 });

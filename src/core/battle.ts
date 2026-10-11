@@ -20,6 +20,15 @@ export interface FighterSpec {
   trait?: Trait | null;
 }
 
+/** 相棒。場には立たず、狙われない。一定の間隔で技を使う。 */
+export interface CompanionSpec {
+  key: string;
+  /** 技のもとになる攻撃の値（団員の平均の攻撃）。 */
+  atk: number;
+  interval: number;
+  skill: Skill;
+}
+
 export type BattleEventKind = "attack" | "strike" | "aoe" | "heal" | "healall" | "selfheal" | "rally" | "down";
 
 export interface BattleEvent {
@@ -27,7 +36,7 @@ export interface BattleEvent {
   t: number;
   /** 行動した側。0 = 味方、1 = 敵。 */
   side: 0 | 1;
-  /** 行動した者の、その側での番号。 */
+  /** 行動した者の、その側での番号。相棒の行動は -1。 */
   actor: number;
   kind: BattleEventKind;
   /** 対象の側と番号。全体が対象のときは target が -1。 */
@@ -69,6 +78,7 @@ export function runBattle(
   bp: Params["battle"],
   rng: Rng,
   record: boolean,
+  companion: CompanionSpec | null = null,
 ): BattleResult {
   const make = (spec: FighterSpec, side: 0 | 1, index: number): Fighter => ({
     side,
@@ -128,6 +138,29 @@ export function runBattle(
     return target;
   };
 
+  // 相棒の行動。場に立たない「味方の行動役」として扱う（体力がなく、狙われない）。
+  let companionAt = companion === null ? Infinity : companion.interval;
+  const companionAct = (c: CompanionSpec, t: number): void => {
+    const actor: Fighter = { side: 0, index: -1, row: 1, maxHp: 1, hp: 1, atk: c.atk, interval: c.interval, skill: c.skill, trait: null, gauge: 0, nextAt: 0, rallyUntil: -1, rallyMult: 1 };
+    const foes = alive(1);
+    const friends = alive(0);
+    const s = c.skill;
+    if (s.type === "strike") {
+      hit(actor, pickTarget(actor, foes), c.atk * s.power, "strike", t);
+    } else if (s.type === "aoe") {
+      for (const f of foes) hit(actor, f, c.atk * s.power, "aoe", t);
+    } else if (s.type === "rally") {
+      for (const f of friends) {
+        f.rallyUntil = t + bp.rallySec;
+        f.rallyMult = 1 + s.power;
+      }
+      push({ t, side: 0, actor: -1, kind: "rally", targetSide: 0, target: -1, amount: 0 });
+    } else {
+      // 回復の技は、相棒の場合は味方全員にかける
+      for (const f of friends) heal(actor, f, c.atk * s.power, "healall", t);
+    }
+  };
+
   let t = 0;
   let timedOut = false;
   while (true) {
@@ -136,6 +169,13 @@ export function runBattle(
       if (f.hp > 0 && (cur === null || f.nextAt < cur.nextAt)) cur = f;
     }
     if (cur === null) break;
+    if (companion !== null && companionAt <= cur.nextAt && companionAt <= bp.timeLimitSec) {
+      t = companionAt;
+      companionAct(companion, t);
+      companionAt = t + companion.interval;
+      if (alive(0).length === 0 || alive(1).length === 0) break;
+      continue;
+    }
     if (cur.nextAt > bp.timeLimitSec) {
       t = bp.timeLimitSec;
       timedOut = true;
