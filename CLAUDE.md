@@ -6,7 +6,7 @@
 ## 最初に必ずやること
 
 1. `bash scripts/vm/run.sh status` を実行し、いまの段階と「あなた待ち」を確かめる。
-2. `pipeline/DECISIONS.md` を読む（v3 から変えた点が書いてある）。
+2. `pipeline/HANDOFF.md`（引き継ぎメモ）と `pipeline/DECISIONS.md`（v3 から変えた点）を読む。
 3. いまの段階の作業に入る。段階の定義は v3、手順は `pipeline/commands/` にある。
 
 ## ユーザーの役割（これ以外を求めない）
