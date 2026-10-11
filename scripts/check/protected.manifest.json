@@ -17,7 +17,7 @@
     "scripts/lib/http.ts": "a9dc15fa131ef69f69a44367572a9705fa879b8acfd358927c698f8b479b9485",
     "scripts/lib/source-hash.ts": "ff10f7c88acfed5478118e8c5b0e1e5d53ade37ecfafeb615960c1855bce77f0",
     "scripts/vm/run.sh": "533c59336b7b763d55419714815b456ee904f48d617cf742cbc2d3021a2ea70f",
-    "spec/ACCEPTANCE.yaml": "cb782159cf42295d312eb8e8b927e41027dc5257935c244ce85debb768718545",
+    "spec/ACCEPTANCE.yaml": "af1510675f8ba2e02943ceb7a617f2d72080e31145dae9d70effbc2fb04a071a",
     "spec/CORE_LOOP_CONTRACT.md": "19b78b5a2ab3d2f50824a46d257a6fc2ef6bdd083f58637097c1295eb65419d2",
     "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
     "tests/e2e/run.ts": "907fe87312b8922661503fb8e28ead50b0edb4c7ac02e1d978c79949a98441a2",

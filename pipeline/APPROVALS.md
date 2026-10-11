@@ -11,3 +11,4 @@
 - 2026-10-10 追加: scripts/check/e2e-gate.ts, scripts/check/exit/S3.ts, scripts/lib/source-hash.ts, tests/e2e/run.ts, tests/flow.test.ts
 - 2026-10-11 追加: scripts/lib/content.ts, tests/fixtures/save-build-4.json
 - 2026-10-11 承認: 第2版（核の循環の作り直し）: ユーザーが 2026-10-11 に、契約書の第2版（決定16〜27への回答と最初の10分の台本）と合否の数字の第2版を承認した。それに合わせて、ルールのテスト（tests/game.test.ts）、通しの流れのテスト（tests/flow.test.ts）、通し操作テスト（tests/e2e/run.ts）、模擬プレイの判定（scripts/check/acceptance.ts）を第2版のルールで書き直した。なくなった仕組み（自動で進む、手前の面での稼ぎ、勝てる見込み、ボスの入団）の検査は外し、新しい仕組み（挑戦、箱、相棒、ミッション、日課、レア度、まとめて稽古、第1版のセーブの扱い）の検査を足した。テストは51件から80件に増えた（変更: scripts/check/acceptance.ts, spec/ACCEPTANCE.yaml, spec/CORE_LOOP_CONTRACT.md, tests/e2e/run.ts, tests/flow.test.ts, tests/game.test.ts）
+- 2026-10-11 承認: 合否の数字のうち「新しい面を突破できなかった時間の最長（ふつうの人の9割）」を 6分以下 → 8分以下 に変更。ユーザーが 2026-10-11 に、理由（「12分までは負けない」と「30分で26面目まで」を両方守ると、負けて稽古してもう一度負けた面が6分を超える。6分は第1版の数字の持ち越しだった）を聞いたうえで承認。ほかの項目と、ゲームの数値は変えていない（変更: spec/ACCEPTANCE.yaml）

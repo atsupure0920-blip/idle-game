@@ -22,7 +22,9 @@ first_30min:
   # 持っている団員の数（人間は7人まで）
   members_owned:        { normal_p50: [5, 7] }
   # 新しい面を突破できなかった時間の最長（分）
-  longest_stall_min:    { normal_p90_max: 6 }
+  # 2026-10-11 に 6 → 8 へ変更（ユーザー承認）。「12分までは負けない」と「30分で26面目まで」を両方守ると、
+  # 残りの18分で進めるのは5〜6面で、負けて稽古してもう一度負けた面は6分を超えるため（pipeline/DECISIONS.md の D-014）。
+  longest_stall_min:    { normal_p90_max: 8 }
   # 1分あたりの操作の回数（少なすぎず、忙しすぎない）
   taps_per_min:         { normal_p50: [2, 15] }
 
