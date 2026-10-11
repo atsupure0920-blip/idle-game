@@ -4,3 +4,4 @@ node_modules
 art/inbox/
 .secrets/
 *.log
+feedback/logs/
