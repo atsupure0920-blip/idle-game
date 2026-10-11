@@ -30,6 +30,8 @@
 - **記録（git の commit や pull）の前に、このフォルダでの削除の許可を取る**（チャットごとに取り直しが要る）。
   許可がないと、git が途中で止まり、`.git/index.lock` が残る。残ったら、許可を取ってから消す。
 - 作業環境から届くのは GitHub と npm だけ。公開URL（`*.github.io`）には届かないので、公開の確認は Claude 側の別の経路で行う。
+  いちばん確かなのは、PCのアプリ内のブラウザで `公開URL/build.json` を開いて番号を見ること。
+  Claude 側からの取得（WebFetch）は、公開から20分以上たっても前のビルドを返したことがあった（build-5 のとき）。
 - 作業環境にはブラウザがない。通し操作テスト（`tests/e2e/run.ts`）は Claude 側の環境で走らせ、
   結果の記録（`pipeline/reports/e2e-last.json`）をソースと一緒に記録する（D-012、`pipeline/rules/ui.md`）。
 - Claude 側の環境で編集した場合は、`git bundle` で1つのファイルにまとめてこのフォルダへ送り、`git pull` で取り込む。
