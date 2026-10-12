@@ -38,6 +38,7 @@ import {
   allySpecs,
   autoEquip,
   autoEquipParty,
+  canAutoEquip,
   battleStats,
   canAutoEquipParty,
   challenge,
@@ -76,6 +77,7 @@ import {
   sanitizeGame,
   setCompanion,
   setPartySlot,
+  unequipAll,
   unequipItem,
 } from "../src/core/game.ts";
 import type { BattleSlot, ChallengeResult, GameData, GameEvent, OwnedEquip } from "../src/core/game.ts";
@@ -1085,6 +1087,29 @@ test("装備: 付け替えは自由。同じ場所は1つだけ。ほかの団�
   assert.equal(unequipItem(g, 999).ok, false);
 });
 
+test("装備: 「全部外す」で、その団員の装備がすべて外れ、ほかの団員の「おまかせ」に使える", () => {
+  let g = createGame(T0, 1, C);
+  const a = give(g, "w2");
+  const b = give(a.game, "c1e");
+  const c = give(b.game, "w1");
+  g = c.game;
+  g = equipItem(g, a.item.uid, "atk", C).game;
+  g = equipItem(g, b.item.uid, "atk", C).game;
+  g = equipItem(g, c.item.uid, "tank", C).game;
+  assert.equal(autoEquip(g, "tank", C).ok, false, "付いていない良い装備がない");
+  const r = unequipAll(g, "atk");
+  assert.equal(r.ok, true);
+  assert.equal(r.removed, 2);
+  assert.deepEqual(r.game.equips.map((e) => e.on), [null, null, "tank"], "ほかの団員の装備は、そのまま");
+  assert.equal(r.game.stats.actions, g.stats.actions + 1, "操作は1回と数える");
+  assert.equal(unequipAll(r.game, "atk").ok, false, "何も付けていなければ、何もしない");
+  assert.equal(unequipAll(g, "nobody").ok, false);
+  const moved = autoEquip(r.game, "tank", C);
+  assert.equal(moved.ok, true, "外したものを、ほかの団員の「おまかせ」で付けられる");
+  assert.equal(equippedOn(moved.game, "tank", C).weapon?.uid, a.item.uid);
+  assert.equal(equippedOn(moved.game, "tank", C).costume?.uid, b.item.uid);
+});
+
 test("装備: おひねりで強化する。強化は、付け替えても残る。上限がある", () => {
   let g: GameData = { ...createGame(T0, 1, C), gold: 0 };
   const w = give(g, "w2");
@@ -1133,6 +1158,10 @@ test("装備: 「おまかせ」は、場所ごとにいちばん良いものを
   assert.equal(r.game.stats.actions, g.stats.actions + 1, "操作は1回と数える");
   assert.equal(autoEquip(r.game, "atk", C).ok, false, "もう良いものがなければ、何もしない");
   assert.equal(autoEquip(g, "nobody", C).ok, false);
+  // 画面の印: おまかせで付け替えが起きるときだけ
+  assert.equal(canAutoEquip(g, "atk", C), true);
+  assert.equal(canAutoEquip(r.game, "atk", C), false);
+  assert.equal(canAutoEquip(g, "nobody", C), false);
 });
 
 test("装備: 編成の全員に「おまかせ」。編成の並び順に良いものを取り、編成の外の団員が付けている装備も使う", () => {

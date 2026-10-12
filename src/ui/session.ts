@@ -11,7 +11,6 @@ import type { BattleResult, CompanionSpec, FighterSpec } from "../core/battle.ts
 import {
   advance,
   autoEquip,
-  autoEquipParty,
   challenge,
   claimDaily,
   claimMission,
@@ -31,6 +30,7 @@ import {
   sanitizeGame,
   setCompanion,
   setPartySlot,
+  unequipAll,
   unequipItem,
 } from "../core/game.ts";
 import type {
@@ -44,6 +44,7 @@ import type {
   LevelUpResult,
   RecruitResult,
   ResetResult,
+  UnequipAllResult,
 } from "../core/game.ts";
 import { stageLabel } from "../core/params.ts";
 import type { BannerId, Content } from "../core/params.ts";
@@ -146,9 +147,10 @@ export interface Session {
   companionLevelUp: (id: string) => ActionResult;
   equip: (uid: number, memberId: string) => ActionResult;
   unequip: (uid: number) => ActionResult;
+  /** 団員の装備を全部外す。 */
+  unequipAll: (memberId: string) => UnequipAllResult;
   enhance: (uid: number) => ActionResult;
   autoEquip: (memberId: string) => AutoEquipResult;
-  autoEquipParty: () => AutoEquipResult;
   claimMission: (id: string) => ClaimResult;
   claimDaily: (id: string) => ClaimResult;
   save: () => void;
@@ -442,13 +444,13 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     },
     equip: (uid, memberId) => act("装備の付け替え", (g) => equipItem(g, uid, memberId, content)),
     unequip: (uid) => act("装備を外す", (g) => unequipItem(g, uid)),
-    enhance: (uid) => act("装備の強化", (g) => enhanceEquip(g, uid, content)),
-    autoEquip: (memberId) => act("おまかせ装備（1人）", (g) => autoEquip(g, memberId, content)),
-    autoEquipParty: () => {
-      const r = act("おまかせ装備（編成）", (g) => autoEquipParty(g, content));
-      if (r.ok) mark(`おまかせ装備（編成）: ${r.changed ?? 0}か所を付け替え（付けている装備 ${equippedCount(game)}か所）`);
+    unequipAll: (memberId) => {
+      const r = act("装備を全部外す", (g) => unequipAll(g, memberId));
+      if (r.ok) mark(`装備を全部外す: ${memberName(memberId)}（${r.removed ?? 0}こ）`);
       return r;
     },
+    enhance: (uid) => act("装備の強化", (g) => enhanceEquip(g, uid, content)),
+    autoEquip: (memberId) => act("おまかせ装備（1人）", (g) => autoEquip(g, memberId, content)),
     claimMission: (id) => {
       const r = act("ミッションの受け取り", (g) => claimMission(g, id, content));
       if (r.ok) mark(`ミッション達成: ${content.missions.find((m) => m.id === id)?.text ?? id}`);

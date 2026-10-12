@@ -13,8 +13,8 @@
 
 import {
   FRONT_SIZE,
-  autoEquipParty,
-  canAutoEquipParty,
+  autoEquip,
+  unequipAll,
   challenge,
   claimDaily,
   claimMission,
@@ -245,7 +245,15 @@ export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy,
   }
 
   // 8. 装備: 良いものが手に入っていれば「おまかせ」で付け替える。安い強化を、いくつかする
-  if (canAutoEquipParty(g, ctx)) g = autoEquipParty(g, ctx).game;
+  // 画面でできるのは1人ずつの操作だけなので、そのとおりに: 控えの団員の装備を外し、編成の全員に1人ずつ「おまかせ」
+  for (const id of Object.keys(g.members)) {
+    if (!g.party.includes(id) && g.equips.some((e) => e.on === id)) g = unequipAll(g, id).game;
+  }
+  for (const id of g.party) {
+    if (id === null) continue;
+    const r = autoEquip(g, id, ctx);
+    if (r.ok) g = r.game;
+  }
   for (let n = 0; n < policy.enhancePerLook; n++) {
     let best: { uid: number; gold: number } | null = null;
     for (const e of g.equips) {

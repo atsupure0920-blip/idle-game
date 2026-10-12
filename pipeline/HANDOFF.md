@@ -21,7 +21,7 @@
 | 保留にした要望 | `pipeline/BACKLOG.md` |
 | 承認の記録 | `pipeline/APPROVALS.md` |
 | 最初の30分の計算結果 | 第3版は `pipeline/reports/S3-v3-first30.md`（第2版は `S3-v2-first30.md`、第1版は `S2-first30.md`） |
-| いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015（第2版は D-013、D-014） |
+| いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015、D-016（第2版は D-013、D-014） |
 | 作り直しの経緯と、ユーザーの回答 | `spec/REVISION-1.md`（決定16〜27）、`spec/REVISION-2.md`（決定28〜41） |
 
 ## 作業のしかた（この環境に特有のこと）

@@ -1049,6 +1049,22 @@ export function unequipItem(game: GameData, uid: number): ActionResult {
   return { game: g, ok: true };
 }
 
+export interface UnequipAllResult extends ActionResult {
+  /** 外した数。 */
+  removed?: number;
+}
+
+/** 団員が付けている装備を、全部外す（外したものは、ほかの団員の「おまかせ」に使える）。 */
+export function unequipAll(game: GameData, memberId: string): UnequipAllResult {
+  if (!game.members[memberId]) return { game, ok: false, reason: "その団員はいません" };
+  const removed = game.equips.filter((e) => e.on === memberId).length;
+  if (removed === 0) return { game, ok: false, reason: "装備を付けていません" };
+  const g = clone(game);
+  for (const e of g.equips) if (e.on === memberId) e.on = null;
+  g.stats.actions += 1;
+  return { game: g, ok: true, removed };
+}
+
 export interface EnhanceInfo {
   ok: boolean;
   /** 要るおひねり。 */
@@ -1137,6 +1153,24 @@ export function autoEquipParty(game: GameData, ctx: Content): AutoEquipResult {
   if (changed === 0) return { game, ok: false, reason: "いまより良い装備が、手持ちにありません" };
   g.stats.actions += 1;
   return { game: g, ok: true, changed };
+}
+
+/** 1人の「おまかせ装備」で、付け替えが起きるか（画面の印に使う。状態は写さずに調べる）。 */
+export function canAutoEquip(g: GameData, memberId: string, ctx: Content): boolean {
+  if (!g.members[memberId]) return false;
+  for (const slot of EQUIP_SLOTS) {
+    let mine = -1;
+    let bestFree = -1;
+    for (const e of g.equips) {
+      const def = ctx.equipById[e.defId];
+      if (!def || def.slot !== slot) continue;
+      const bonus = equipBonus(def, e.level, ctx.params);
+      if (e.on === memberId) mine = bonus;
+      else if (e.on === null && bonus > bestFree) bestFree = bonus;
+    }
+    if (bestFree > mine + 1e-12) return true;
+  }
+  return false;
 }
 
 /** 「おまかせ装備（編成の全員）」で、付け替えが起きるか（画面の印に使う）。 */

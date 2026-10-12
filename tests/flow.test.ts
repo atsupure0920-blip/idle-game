@@ -16,7 +16,7 @@ import { EQUIP_SLOTS, idleGoldPerMin, levelCostTo } from "../src/core/params.ts"
 import {
   GAME_VERSION,
   PARTY_SIZE,
-  canAutoEquipParty,
+  canAutoEquip,
   dailyList,
   enhanceInfo,
   equippedCount,
@@ -50,7 +50,7 @@ import {
   recruitHtml,
   recruitResultHtml,
 } from "../src/ui/views.ts";
-import type { DetailState, LastResult, UiState } from "../src/ui/views.ts";
+import type { DetailState, HeroState, LastResult, UiState } from "../src/ui/views.ts";
 import { companionSkillText, equipEffectText, equipName, fighterName, formatNumber, passiveText, plusText, rarityText, rewardText, skillText } from "../src/ui/texts.ts";
 import { loadContent } from "../scripts/lib/content.ts";
 
@@ -169,7 +169,11 @@ function tidy(s: Session, ctx: Content): void {
   for (const id of Object.keys(s.game().companions)) while (s.companionLevelUp(id).ok) {
     // 上げられるだけ上げる
   }
-  s.autoEquipParty();
+  // 装備は、画面と同じく1人ずつ: 控えの団員の装備を外し、編成の全員に「おまかせ」
+  for (const id of Object.keys(s.game().members)) {
+    if (!s.game().party.includes(id) && s.game().equips.some((e) => e.on === id)) s.unequipAll(id);
+  }
+  for (const id of s.game().party) if (id !== null) s.autoEquip(id);
   trainEvenly(s, ctx);
 }
 
@@ -187,12 +191,14 @@ function progressTo(w: World, s: Session, ctx: Content, target: number): GameEve
   return events;
 }
 
+const HERO: HeroState = { id: null, view: "train", filter: "all", sort: "rarity", resetArmed: false };
+
 function uiState(result: LastResult | null = null): UiState {
-  return { tab: "journey", selectedSlot: null, result, detail: null, feed: ["1-1 を突破"], buildId: "test", debug: false, standalone: false, saveStatus: "保存済み", speed: 1, importMessage: "", exportText: "" };
+  return { tab: "journey", selectedSlot: null, result, detail: null, hero: HERO, feed: ["1-1 を突破"], buildId: "test", debug: false, standalone: false, saveStatus: "保存済み", speed: 1, importMessage: "", exportText: "" };
 }
 
-function detailOf(id: string, view: DetailState["view"] = "main", extra: Partial<DetailState> = {}): DetailState {
-  return { id, view, slot: null, target: 1, resetArmed: false, ...extra };
+function detailOf(id: string, view: DetailState["view"], extra: Partial<DetailState> = {}): DetailState {
+  return { id, view, slot: null, target: 1, ...extra };
 }
 
 /** すべての画面の中身を作ってみる（例外が出ないこと、空でないこと）。 */
@@ -202,7 +208,9 @@ function renderAll(s: Session, ctx: Content, result: LastResult | null = null): 
   const now = s.now();
   const parts = [
     journeyInfoHtml(g, ctx, ui, now),
-    membersHtml(g, ctx),
+    membersHtml(g, ctx, HERO),
+    membersHtml(g, ctx, { ...HERO, sort: "level" }),
+    ...(["1", "2", "3", "elite"] as const).map((filter) => membersHtml(g, ctx, { ...HERO, filter })),
     partyHtml(g, ctx, { ...ui, selectedSlot: 0 }),
     partyHtml(g, ctx, ui),
     companionsHtml(g, ctx),
@@ -214,8 +222,9 @@ function renderAll(s: Session, ctx: Content, result: LastResult | null = null): 
   ];
   for (const id of Object.keys(g.members)) {
     const level = g.members[id]?.level ?? 1;
-    parts.push(memberModalHtml(g, ctx, detailOf(id)));
-    parts.push(memberModalHtml(g, ctx, detailOf(id, "main", { resetArmed: true })));
+    parts.push(membersHtml(g, ctx, { ...HERO, id }));
+    parts.push(membersHtml(g, ctx, { ...HERO, id, resetArmed: true }));
+    parts.push(membersHtml(g, ctx, { ...HERO, id, view: "equip" }));
     parts.push(memberModalHtml(g, ctx, detailOf(id, "level", { target: level + 1 })));
     for (const slot of EQUIP_SLOTS) parts.push(memberModalHtml(g, ctx, detailOf(id, "slot", { slot })));
   }
@@ -332,15 +341,22 @@ test("通し: 起動 → 挑戦 → ミッション → 高級10連 → 編成 �
   assert.equal(s.resetLevel("h_star").ok, true);
   assert.equal(s.game().gold, gold0);
 
-  // 装備: 初クリアの装備を「おまかせ」で付ける。外して、付け直して、強化する
-  assert.equal(canAutoEquipParty(s.game(), ctx), true);
-  const auto = s.autoEquipParty();
+  // 装備: 初クリアの装備を、1人の「おまかせ」で付ける。全部外す。外して、付け直して、強化する
+  const lead = s.game().party[0] as string;
+  assert.equal(canAutoEquip(s.game(), lead, ctx), true);
+  const auto = s.autoEquip(lead);
   assert.ok(auto.ok && auto.changed === 1);
   assert.equal(equippedCount(s.game()), 1);
-  assert.equal(s.autoEquipParty().ok, false, "付け替えるものがなければ、何も起きない");
+  assert.equal(s.autoEquip(lead).ok, false, "付け替えるものがなければ、何も起きない");
+  assert.equal(canAutoEquip(s.game(), lead, ctx), false);
   const item = s.game().equips[0];
-  assert.ok(item && item.on !== null);
+  assert.ok(item && item.on === lead);
   const wearer = item.on;
+  const off = s.unequipAll(lead);
+  assert.ok(off.ok && off.removed === 1);
+  assert.equal(equippedCount(s.game()), 0);
+  assert.equal(s.unequipAll(lead).ok, false, "何も付けていなければ、何もしない");
+  assert.equal(s.autoEquip(lead).ok, true, "外したものを、また「おまかせ」で付けられる");
   assert.equal(s.unequip(item.uid).ok, true);
   assert.equal(equippedCount(s.game()), 0);
   assert.equal(s.equip(item.uid, "h_star").ok, true, "付け替えは、何回でもただ");
@@ -356,7 +372,7 @@ test("通し: 起動 → 挑戦 → ミッション → 高級10連 → 編成 �
   assert.equal(s.enhance(item.uid).ok, true);
   assert.equal(s.game().equips[0]?.level, 1);
   assert.equal(s.game().gold, goldBefore - cost.gold);
-  assert.ok(memberModalHtml(s.game(), ctx, detailOf(wearer)).includes("+1"), "強化した装備は、名前に +1 が付く");
+  assert.ok(membersHtml(s.game(), ctx, { ...HERO, id: wearer, view: "equip" }).includes(" +1</span>"), "強化した装備は、名前に +1 が付く");
 
   // 箱: 時間でたまっていて、受け取れる
   run(w, s, 60);
@@ -458,7 +474,7 @@ test("通し: 起動 → 挑戦 → ミッション → 高級10連 → 編成 �
     "稽古（+1）",
     "稽古（指定）: 花形役者 を Lv",
     "リセット: 花形役者",
-    "おまかせ装備（編成）: 1か所を付け替え",
+    "装備を全部外す: ",
     "装備の強化 ",
     "を突破",
     "で負け",
@@ -611,6 +627,39 @@ test("セーブ: 第2版（build-5）のセーブで開いても、退避して�
   oldSaveResets("tests/fixtures/save-build-5.json", v.savedAtMs, v.state.opens);
 });
 
+test("セーブ: 第3版（build-6）のセーブは、そのまま続きから遊べる（新しい画面になっても、進み具合は消えない）", () => {
+  const ctx = loadContent(".");
+  // 2026-10-12 に、ユーザーの iPhone から届いた build-6 のログにあったセーブそのもの
+  const text = readFileSync("tests/fixtures/save-build-6.json", "utf8").trim();
+  const v = JSON.parse(text) as { savedAtMs: number; state: { opens: number } };
+  const w = world();
+  w.clock.now = v.savedAtMs + 2 * HOUR;
+  w.store.set("save", text);
+  const s = createSession(w.deps, ctx);
+  assert.deepEqual(w.backups, [], "退避しない（最初からにならない）");
+  assert.ok(!s.notices().some((n) => n.includes("最初から")));
+  assert.equal(s.state().opens, v.state.opens + 1);
+  assert.equal(s.game().highestCleared, 23);
+  assert.equal(ownedCount(s.game()), 20);
+  assert.equal(s.game().equips.length, 23);
+  assert.equal(Object.keys(s.game().companions).length, 2);
+  s.tick();
+  const back = idlePending(s.game(), s.now(), ctx);
+  assert.ok(back.gold > 0, "離れていたあいだの放置報酬がある");
+  assert.equal(s.collectIdle().ok, true);
+  // 新しい画面で、どの団員を選んでも作れる
+  for (const id of Object.keys(s.game().members)) {
+    assert.ok(membersHtml(s.game(), ctx, { ...HERO, id }).includes(`data-testid="detail-${id}"`));
+    assert.ok(membersHtml(s.game(), ctx, { ...HERO, id, view: "equip" }).includes('data-testid="unequip-all"'));
+  }
+  // 控えの団員は装備を付けていないので「全部外す」は効かない。編成の団員は外せる
+  assert.equal(s.unequipAll("h_clown").ok, false);
+  const r = s.unequipAll("h_guard");
+  assert.ok(r.ok && r.removed === 4);
+  assert.equal(s.autoEquip("h_guard").ok, true);
+  battle(w, s);
+});
+
 test("セーブの書き出しと読み込み: 別の端末に移せる。壊れた文字は読み込まず、いまのセーブを守る", () => {
   const ctx = loadContent(".");
   const a = world();
@@ -714,7 +763,18 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     "goal-daily",
     "hint",
     "party-power",
-    "auto-equip-party",
+    "hero-card",
+    "hero-portrait",
+    "hero-power",
+    "hero-tab-train",
+    "hero-tab-equip",
+    "unequip-all",
+    "filter-all",
+    "filter-1",
+    "filter-2",
+    "filter-3",
+    "filter-elite",
+    "sort-toggle",
     "members-gold",
     "slot-0",
     "slot-5",
@@ -753,7 +813,6 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     "detail-hp",
     "detail-atk",
     "detail-shards",
-    "level-open",
     "reset-button",
     "reset-confirm",
     "promote-button",
@@ -766,7 +825,6 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     "level-max",
     "level-cost",
     "level-confirm",
-    "detail-back",
     "slot-list",
     "modal-close",
     "companion-result",
@@ -787,7 +845,8 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     const used = html.includes(`data-testid="equip-${e.uid}"`) || html.includes(`data-testid="unequip-${e.uid}"`);
     assert.ok(used, `装備 ${e.uid} が、選ぶ一覧に出ている`);
   }
-  assert.ok(Object.keys(g.members).some((id) => html.includes(`data-testid="promote-${id}"`)), "昇格できる団員には、一覧に昇格のボタンが出る");
+  assert.ok(Object.keys(g.members).some((id) => html.includes(`data-testid="tile-dot-${id}"`)), "昇格できる団員には、一覧の札に赤い印が付く");
+  for (const word of ["編成の全員に、おまかせ装備"]) assert.ok(!html.includes(word), `「${word}」は、もう出さない（おまかせ装備は1人ずつ）`);
   assert.ok(ownedCount(g) >= 15, `60回勧誘すれば、団員がそろってくる: ${ownedCount(g)}人`);
   assert.ok(equippedCount(g) >= 8, `編成に付いている装備: ${equippedCount(g)}か所`);
   assert.equal(TABS.length, 6);

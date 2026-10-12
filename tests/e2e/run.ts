@@ -378,14 +378,21 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     expect((await text(page, `slot-${from}`)) === beforeFrom && (await text(page, `slot-${to}`)) === beforeTo, "元に戻せていない");
   }, true);
 
-  await step("団員: 「+1」で1つ上がる。「レベルを指定」で、決めたところまで上がる。まとめて全部上げるボタンはない", async () => {
+  await step("団員（ヒーロー画面）: 一覧で選ぶと上の札が替わる。「+1」で1つ上がり、「レベルを指定」で決めたところまで上がる。まとめて全部上げるボタンはない", async () => {
     await tab(page, "members");
     const body = await page.locator(tid("panel")).innerText();
     expect(!body.includes("まとめて") && (await page.locator(tid("train-party")).count()) === 0, "まとめて稽古するボタンが残っている");
+    expect((await page.locator(tid("auto-equip-party")).count()) === 0, "編成の全員のおまかせ装備が残っている");
+    expect((await page.locator(`${tid("hero-card")}`).count()) === 1, "選んだ団員の札がない");
     await checkLayout(page, "団員（10連のあと）");
+    await page.locator(tid("detail-h_star")).click();
+    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("花形役者"), tid("detail-title"));
+    expect((await page.locator(tid("modal")).count()) === 0, "選んだだけで、ポップアップが出た");
+    expect((await page.locator(`${tid("detail-h_star")}.is-selected`).count()) === 1, "選んだ札に印が付いていない");
     await page.waitForSelector(`${tid("levelup-h_star")}:not([disabled])`, { timeout: 10_000 });
     await page.locator(tid("levelup-h_star")).click();
     await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") === 2, tid("member-level-h_star"));
+    expect((await text(page, "detail-level")) === "2", "札のレベルが変わっていない");
     expect(await page.locator(tid("levelten-h_star")).isDisabled(), "おひねりが足りないのに、+10 が押せる");
     await page.locator(tid("levelset-h_star")).click();
     await page.waitForSelector(tid("level-target"));
@@ -402,9 +409,10 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await checkLayout(page, "レベルを指定");
     await shot(page, "08-level-set");
     await page.locator(tid("level-confirm")).click();
+    await page.waitForSelector(tid("modal"), { state: "detached" });
     await page.waitForFunction((args) => Number(document.querySelector(args.sel)?.textContent ?? "0") === args.want, { sel: tid("detail-level"), want: target });
-    expect((await text(page, "modal")).includes("ダメージ"), "くわしい能力が出ていない");
-    await checkLayout(page, "団員のくわしい能力");
+    expect((await text(page, "hero-card")).includes("技"), "技の説明が出ていない");
+    await checkLayout(page, "団員の札");
     await shot(page, "09-member-detail");
     return `花形役者を Lv${target} に`;
   }, true);
@@ -421,55 +429,90 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     const back = Number((await savedGame(page))?.["gold"]);
     expect(back > Number(spent), "おひねりが戻っていない");
     expect(await page.locator(tid("reset-button")).isDisabled(), "レベル1なのに、リセットできる");
-    await closeModal(page);
     expect((await text(page, "member-level-h_star")) === "1", "一覧のレベルが戻っていない");
-    // 稽古の前（+1 を押す前）と、ぴったり同じ額に戻っている
     const counters = (await savedGame(page))?.["counters"] as { resets?: number } | undefined;
     expect(counters?.resets === 1, "リセットの回数が記録されていない");
     return `おひねり ${String(spent)} → ${back}`;
   }, true);
 
-  await step("装備: 「おまかせ装備」で付き、強化でき、付け替えられる", async () => {
+  await step("装備: 1人ずつ「おまかせ装備」で付き、「全部外す」で外れ、強化でき、付け替えられる。ポップアップは外を押しても閉じる", async () => {
     // 強化に使うおひねりを用意する（手に入った装備の★によって、要る額が変わるので）
     await grant(page, "dbg-gold", 1);
     await tab(page, "members");
     const gold0 = Number((await savedGame(page))?.["gold"]);
-    await page.locator(tid("auto-equip-party")).click();
-    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLButtonElement | null)?.disabled === true, tid("auto-equip-party"), { timeout: 5_000 });
-    const item = (await savedEquips(page))[0];
-    expect(item !== undefined && item.on !== null, "装備が付いていない");
-    const wearer = item?.on as string;
-    const slot = (item?.defId ?? "").split("_")[1] ?? "";
+    const party = (await savedParty(page)).filter((id): id is string => id !== null);
+    const wearer = party[0] as string;
     await page.locator(tid(`detail-${wearer}`)).click();
-    await page.waitForSelector(tid(`eq-${slot}`));
-    expect(!(await text(page, `eq-${slot}`)).includes("なし"), "くわしい能力に、装備が出ていない");
-    await clickIn(page, `enhance-${slot}`);
+    await page.locator(tid("hero-tab-equip")).click();
+    await page.waitForSelector(tid("unequip-all"));
+    expect(await page.locator(tid("unequip-all")).isDisabled(), "何も付けていないのに、全部外すが押せる");
+    await page.locator(tid("auto-equip")).click();
+    await page.waitForFunction((sel) => (document.querySelector(sel) as HTMLButtonElement | null)?.disabled === true, tid("auto-equip"), { timeout: 5_000 });
+    const item = (await savedEquips(page))[0];
+    expect(item !== undefined && item.on === wearer, "選んだ団員に、装備が付いていない");
+    const slot = (item?.defId ?? "").split("_")[1] ?? "";
+    expect(!(await text(page, `eq-${slot}`)).includes("なし"), "札に、装備が出ていない");
+    // 全部外す → また「おまかせ」
+    await page.locator(tid("unequip-all")).click();
+    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("なし"), tid(`eq-${slot}`), { timeout: 5_000 });
+    expect((await savedEquips(page))[0]?.on === null, "全部外すで、外れていない");
+    await page.locator(tid("auto-equip")).click();
+    await page.waitForFunction((sel) => !(document.querySelector(sel)?.textContent ?? "").includes("なし"), tid(`eq-${slot}`), { timeout: 5_000 });
+    // 強化
+    await page.locator(tid(`enhance-${slot}`)).click();
     await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("+1"), tid(`eq-${slot}`), { timeout: 5_000 });
     expect(Number((await savedGame(page))?.["gold"]) < gold0, "強化しても、おひねりが減っていない");
+    await checkLayout(page, "団員の札（装備）");
     await shot(page, "10-equipment");
-    // 外して、付け直す
+    // 装備を選ぶポップアップ: 外を押して閉じる
     await page.locator(tid(`slot-open-${slot}`)).click();
     await page.waitForSelector(tid("slot-list"));
     await checkLayout(page, "装備を選ぶ");
     await shot(page, "11-equip-pick");
-    await page.locator(tid(`unequip-${item?.uid}`)).click();
+    await page.waitForTimeout(450);
+    await page.mouse.click(6, 6);
+    await page.waitForSelector(tid("modal"), { state: "detached", timeout: 3_000 }).catch(() => {
+      throw new Error("ポップアップの外を押しても、閉じない");
+    });
+    // 外して、付け直す（付け直すとポップアップが閉じる）
+    await page.locator(tid(`slot-open-${slot}`)).click();
+    await clickIn(page, `unequip-${item?.uid}`);
     await page.waitForSelector(tid(`equip-${item?.uid}`));
     expect((await savedEquips(page))[0]?.on === null, "外せていない");
     await page.locator(tid(`equip-${item?.uid}`)).click();
-    await page.waitForSelector(tid(`eq-${slot}`));
+    await page.waitForSelector(tid("modal"), { state: "detached" });
     const again = (await savedEquips(page))[0];
     expect(again?.on === wearer && again?.level === 1, "付け直すと、強化が消えた");
     // 別の団員に移せる（付け替えは、ただ）
-    await closeModal(page);
-    const other = (await savedParty(page)).find((id) => id !== null && id !== wearer) as string;
+    const other = party.find((id) => id !== wearer) as string;
     await page.locator(tid(`detail-${other}`)).click();
-    await clickIn(page, `slot-open-${slot}`);
+    await page.waitForSelector(tid(`slot-open-${slot}`));
+    await page.locator(tid(`slot-open-${slot}`)).click();
     await page.waitForSelector(tid(`equip-${item?.uid}`));
     expect((await text(page, "slot-list")).includes("が装備中"), "ほかの団員が付けていることが出ていない");
-    await page.locator(tid(`equip-${item?.uid}`)).click();
-    await page.waitForSelector(tid(`eq-${slot}`));
+    await clickIn(page, `equip-${item?.uid}`);
+    await page.waitForSelector(tid("modal"), { state: "detached" });
     expect((await savedEquips(page))[0]?.on === other, "ほかの団員に移せていない");
-    await closeModal(page);
+  }, true);
+
+  await step("操作しても、一覧のスクロールの位置が元に戻らない", async () => {
+    await page.locator(tid("hero-tab-train")).click();
+    const list = page.locator('[data-scroll-key="hero-list"]');
+    await list.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    const before = await list.evaluate((el) => el.scrollTop);
+    expect(before > 20, `一覧がスクロールできない（${before}）`);
+    const id = (await savedParty(page)).find((x) => x !== null) as string;
+    // 札のボタン（+1）と、一覧の札（選ぶ）を押しても、位置はそのまま
+    const lv = page.locator(`${tid(`levelup-${id}`)}:not([disabled])`);
+    if ((await lv.count()) > 0) await lv.click();
+    await page.waitForTimeout(400);
+    const after1 = await list.evaluate((el) => el.scrollTop);
+    const last = page.locator('[data-scroll-key="hero-list"] .tile').last();
+    await last.click();
+    await page.waitForTimeout(400);
+    const after2 = await list.evaluate((el) => el.scrollTop);
+    expect(Math.abs(after1 - before) <= 2 && Math.abs(after2 - before) <= 2, `位置が変わった（${before} → ${after1} → ${after2}）`);
+    return `位置 ${before}`;
   }, true);
 
   await step("箱: おひねりが時間でたまっていて、受け取れる", async () => {
@@ -510,7 +553,7 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await page.waitForTimeout(3000);
     expect((await text(page, "hud-stage")) === stage && !(await page.locator(tid("challenge-button")).isDisabled()), "勝手に再挑戦が始まった");
     await page.locator(tid("goto-train")).click();
-    await page.waitForSelector(tid("auto-equip-party"));
+    await page.waitForSelector(tid("hero-card"));
     return `負けた面: ${stage}`;
   }, true);
 
@@ -519,14 +562,23 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await grant(page, "dbg-gold-big", 2);
     await tab(page, "members");
     const party = (await savedParty(page)).filter((id): id is string => id !== null);
+    await page.locator(tid("hero-tab-train")).click();
     for (const id of party) {
+      await page.locator(tid(`detail-${id}`)).click();
+      await page.waitForSelector(tid(`levelten-${id}`));
       const before = Number(await text(page, `member-level-${id}`));
       for (const add of [10, 20, 30]) {
         await page.locator(tid(`levelten-${id}`)).click();
         await page.waitForFunction((args) => Number(document.querySelector(args.sel)?.textContent ?? "0") === args.want, { sel: tid(`member-level-${id}`), want: before + add });
       }
     }
-    if (!(await page.locator(tid("auto-equip-party")).isDisabled())) await page.locator(tid("auto-equip-party")).click();
+    // 装備は1人ずつ: 編成の全員に「おまかせ装備」
+    await page.locator(tid("hero-tab-equip")).click();
+    for (const id of party) {
+      await page.locator(tid(`detail-${id}`)).click();
+      await page.waitForSelector(tid("auto-equip"));
+      if (!(await page.locator(tid("auto-equip")).isDisabled())) await page.locator(tid("auto-equip")).click();
+    }
     const worn = (await savedEquips(page)).filter((e) => e.on !== null).length;
     expect(worn >= 4, `付いている装備が ${worn}か所`);
     await shot(page, "13-members");
@@ -729,7 +781,8 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
       "稽古（+10）",
       "稽古（指定）: 花形役者",
       "リセット: 花形役者",
-      "おまかせ装備（編成）",
+      "おまかせ装備（1人）",
+      "装備を全部外す: ",
       "装備の強化",
       "もりのくま が相棒になる",
       "デバッグ機能の使用: あり",

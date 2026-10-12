@@ -19,6 +19,7 @@ import {
   badges,
   companionJoinHtml,
   companionsHtml,
+  heroSelectedId,
   journeyInfoHtml,
   journeyLive,
   memberModalHtml,
@@ -77,6 +78,7 @@ function start(): void {
     selectedSlot: null,
     result: null,
     detail: null,
+    hero: { id: null, view: "train", filter: "all", sort: "rarity", resetArmed: false },
     feed: [],
     buildId: __BUILD_ID__,
     debug: __DEBUG__,
@@ -147,6 +149,8 @@ function start(): void {
   let modalHtml = "";
   /** ポップアップが出た時刻。出た直後の押し間違い（連打していた指が当たる）を防ぐのに使う。 */
   let modalShownAt = 0;
+  /** いま出しているポップアップ（同じものを描き直すときは、スクロールの位置を保つ）。 */
+  let modalShown: Modal | null = null;
   const renderModal = (): void => {
     const top = modals[0];
     const html = top ? top.html() : "";
@@ -155,11 +159,19 @@ function start(): void {
     if (html === "") {
       modalRoot.hidden = true;
       modalRoot.innerHTML = "";
+      modalShown = null;
       return;
     }
     if (modalRoot.hidden) modalShownAt = Date.now();
+    const same = modalShown === top;
+    const scroll = same ? (modalRoot.querySelector<HTMLElement>(".modal")?.scrollTop ?? 0) : 0;
     modalRoot.hidden = false;
     modalRoot.innerHTML = `<div class="modal" data-testid="modal">${html}</div>`;
+    modalShown = top ?? null;
+    if (scroll > 0) {
+      const el = modalRoot.querySelector<HTMLElement>(".modal");
+      if (el) el.scrollTop = scroll;
+    }
   };
   const openModal = (html: () => string, detail = false): void => {
     modals.push({ html, detail });
@@ -170,6 +182,7 @@ function start(): void {
     if (modals[0]?.detail === true) ui.detail = null;
     modals.shift();
     modalHtml = "";
+    modalShown = null;
     modalRoot.hidden = true;
     modalRoot.innerHTML = "";
     renderModal();
@@ -255,7 +268,16 @@ function start(): void {
     // 入力の途中の文字（セーブの読み込み欄）は、描き直しても残す
     const area = target.querySelector<HTMLTextAreaElement>('[data-testid="import-area"]');
     const typed = area ? area.value : "";
+    // スクロールの位置を保つ（中身を作り直しても、操作の前の場所のままにする）
+    const top = target.scrollTop;
+    const inner: Record<string, number> = {};
+    for (const el of Array.from(target.querySelectorAll<HTMLElement>("[data-scroll-key]"))) inner[el.dataset["scrollKey"] ?? ""] = el.scrollTop;
     target.innerHTML = html;
+    target.scrollTop = top;
+    for (const el of Array.from(target.querySelectorAll<HTMLElement>("[data-scroll-key]"))) {
+      const v = inner[el.dataset["scrollKey"] ?? ""];
+      if (v !== undefined) el.scrollTop = v;
+    }
     if (typed !== "") {
       const again = target.querySelector<HTMLTextAreaElement>('[data-testid="import-area"]');
       if (again) again.value = typed;
@@ -306,11 +328,12 @@ function start(): void {
     const onJourney = ui.tab === "journey";
     journey.hidden = !onJourney;
     panel.hidden = onJourney;
+    panel.classList.toggle("panel-hero", ui.tab === "members");
     if (onJourney) {
       setHtml(info, "journey", journeyInfoHtml(g, content, ui, now));
       applyLive(info, journeyLive(g, content, now));
     } else if (ui.tab === "members") {
-      setHtml(panel, "panel", membersHtml(g, content));
+      setHtml(panel, "panel", membersHtml(g, content, ui.hero));
     } else if (ui.tab === "party") {
       setHtml(panel, "panel", partyHtml(g, content, ui));
     } else if (ui.tab === "companions") {
@@ -334,6 +357,10 @@ function start(): void {
   const setTab = (tab: Tab): void => {
     ui.tab = tab;
     ui.selectedSlot = tab === "party" ? firstEmptySlot() : null;
+    ui.hero = { ...ui.hero, resetArmed: false };
+    // 別の画面へ移るときだけ、先頭から見せる
+    lastHtml["panel"] = "";
+    panel.innerHTML = "";
     panel.scrollTop = 0;
   };
 
@@ -399,17 +426,23 @@ function start(): void {
         else if (!r.ok) fail(r.reason);
         break;
       }
-      case "detail":
-        ui.detail = { id, view: "main", slot: null, target: 0, resetArmed: false };
-        openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
+      case "select":
+        ui.hero = { ...ui.hero, id, resetArmed: false };
+        break;
+      case "hero-view":
+        ui.hero = { ...ui.hero, view: el.dataset["v"] === "equip" ? "equip" : "train", resetArmed: false };
+        break;
+      case "filter":
+        ui.hero = { ...ui.hero, filter: (el.dataset["v"] ?? "all") as UiState["hero"]["filter"] };
+        break;
+      case "sort-toggle":
+        ui.hero = { ...ui.hero, sort: ui.hero.sort === "level" ? "rarity" : "level" };
         break;
       case "level-open": {
-        const own = session.game().members[id !== "" ? id : (ui.detail?.id ?? "")];
-        const mid = id !== "" ? id : (ui.detail?.id ?? "");
+        const own = session.game().members[id];
         if (!own) break;
-        const wasOpen = ui.detail !== null;
-        ui.detail = { id: mid, view: "level", slot: null, target: own.level + 1, resetArmed: false };
-        if (!wasOpen) openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
+        ui.detail = { id, view: "level", slot: null, target: own.level + 1 };
+        openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
         break;
       }
       case "level-step":
@@ -432,23 +465,18 @@ function start(): void {
         const r = session.levelUpTo(d.id, target, "指定");
         if (r.ok) {
           toast(`${content.byId[d.id]?.name ?? ""} を Lv ${target} に上げました（+${r.levels ?? 0}）`, "good");
-          ui.detail = { ...d, view: "main" };
+          closeModal();
         } else fail(r.reason);
         break;
       }
-      case "detail-back":
-        if (ui.detail) ui.detail = { ...ui.detail, view: "main", slot: null, resetArmed: false };
-        break;
       case "reset":
-        if (ui.detail) ui.detail = { ...ui.detail, resetArmed: true };
+        ui.hero = { ...ui.hero, resetArmed: true };
         break;
       case "reset-confirm": {
-        const d = ui.detail;
-        if (!d) break;
-        const r = session.resetLevel(d.id);
-        if (r.ok) toast(`${content.byId[d.id]?.name ?? ""} をリセットしました。おひねり +${formatNumber(r.refund ?? 0)}`, "good");
+        const r = session.resetLevel(id);
+        if (r.ok) toast(`${content.byId[id]?.name ?? ""} をリセットしました。おひねり +${formatNumber(r.refund ?? 0)}`, "good");
         else fail(r.reason);
-        ui.detail = { ...d, resetArmed: false };
+        ui.hero = { ...ui.hero, resetArmed: false };
         break;
       }
       case "promote": {
@@ -457,14 +485,18 @@ function start(): void {
         else fail(r.reason);
         break;
       }
-      case "slot-open":
-        if (ui.detail) ui.detail = { ...ui.detail, view: "slot", slot: (el.dataset["slot"] ?? "weapon") as EquipSlot, resetArmed: false };
+      case "slot-open": {
+        const mid = heroSelectedId(session.game(), content, ui.hero);
+        if (mid === null) break;
+        ui.detail = { id: mid, view: "slot", slot: (el.dataset["slot"] ?? "weapon") as EquipSlot, target: 0 };
+        openModal(() => (ui.detail ? memberModalHtml(session.game(), content, ui.detail) : ""), true);
         break;
+      }
       case "equip": {
         const d = ui.detail;
         if (!d) break;
         const r = session.equip(Number(el.dataset["uid"]), d.id);
-        if (r.ok) ui.detail = { ...d, view: "main", slot: null };
+        if (r.ok) closeModal();
         else fail(r.reason);
         break;
       }
@@ -489,9 +521,9 @@ function start(): void {
         else fail(r.reason);
         break;
       }
-      case "auto-equip-party": {
-        const r = session.autoEquipParty();
-        if (r.ok) toast(`編成の装備を ${r.changed ?? 0}か所、付け替えました`, "good");
+      case "unequip-all": {
+        const r = session.unequipAll(id);
+        if (r.ok) toast(`装備を ${r.removed ?? 0}こ外しました`, "good");
         else fail(r.reason);
         break;
       }
@@ -637,6 +669,7 @@ function start(): void {
           ui.feed = [];
           ui.result = null;
           ui.detail = null;
+          ui.hero = { id: null, view: "train", filter: "all", sort: "rarity", resetArmed: false };
           ui.exportText = "";
           ui.importMessage = "";
           lastHtml["panel"] = "";
@@ -660,6 +693,15 @@ function start(): void {
   };
 
   document.addEventListener("click", (ev) => {
+    // ポップアップの外（暗いところ）を押したら閉じる。出た直後の押し間違いは除く
+    if (ev.target === modalRoot && !modalRoot.hidden) {
+      if (Date.now() - modalShownAt >= MODAL_GUARD_MS) {
+        closeModal();
+        handle(session.tick());
+        render();
+      }
+      return;
+    }
     const target = ev.target instanceof Element ? ev.target.closest<HTMLElement>("[data-action]") : null;
     if (!target || (target instanceof HTMLButtonElement && target.disabled)) return;
     if (modalRoot.contains(target) && Date.now() - modalShownAt < MODAL_GUARD_MS) return;

@@ -20,11 +20,12 @@
     "spec/ACCEPTANCE.yaml": "45007114aded649eda38c3478043b484e1fc481ab1887fccd4458ea6a171e62f",
     "spec/CORE_LOOP_CONTRACT.md": "a8a73c3cebfcfa57dabab33829f70b3fc1d22dcba05d7003acf8aaeec1dfe4d6",
     "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
-    "tests/e2e/run.ts": "891b36d4f9f6f160d6ebd8d52c5f4d877886a303638314fafbecba2d25da1474",
+    "tests/e2e/run.ts": "80fe2ff4fb621910e9baf604b0c55958236e78cc0abc58acaa2526ddeae9a8b6",
     "tests/fixtures/save-build-4.json": "4b00e45f19e050d872444949679a3530473e89e19aa14042b4ebf1a2d8e1f8a0",
     "tests/fixtures/save-build-5.json": "b78c2c4ea7cab4b5c234ecdb75bd0d8f6e0a8497c5f55b5b5d1d3899174147ea",
-    "tests/flow.test.ts": "cff0ee528471544896bce579df145cea21c5b8d3d64502df67c2ca78ef934781",
-    "tests/game.test.ts": "21e6d246c69efc6a8d262c4d2362df61e7763a6286d7b0ec2a9a9ace3a241722",
+    "tests/fixtures/save-build-6.json": "4f294e00750c18f5fc0d4390564c0d8bbfdb80972024ba44d0a1bffb620aff79",
+    "tests/flow.test.ts": "09db75b3b4f8f27daa14b648830a0f69515663079628df85650602d97fde75fb",
+    "tests/game.test.ts": "4a857acc2c8a8c9985912d97a09b6f54c65e3b1a9cc0fb21dca60e9d26682531",
     "tsconfig.core.json": "0a0f18608c5eff846926e9083c47b7dbf8b53e7e262b39051853578678fe6e25",
     "tsconfig.json": "20729cadc6a64190bf6266460d4d9af5257dbd187bf8eb1560fddf80606b8acd"
   }
