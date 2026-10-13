@@ -24,6 +24,8 @@
 - 背景が透明でないとき: `Make the background fully transparent (PNG with alpha). No floor, no shadow, no backdrop.`
 - 全身が切れているとき: `Show the whole body from the top of the head to the soles of the feet, with empty margin around it.`
 - 両手が同じ側に寄ったとき（大道具係の盾など）: `Fix the hands: the board is strapped to the forearm on the LEFT side of the image only, and that hand is hidden behind the board. The other hand, on the RIGHT side of the image, raises a wooden mallet at shoulder height. The two hands must be on opposite sides of the body. Never put both hands on the board or on the same side.`
+- 指の数をそろえるとき（4本にそろえる）: `Draw simple chibi hands: small rounded mitten-like hands with exactly 4 short fingers (3 fingers + thumb), no knuckles, no nails, no realistic finger detail.`
+- 体が細長い・頭が小さいとき: `Make the character more chibi to match the reference: head is 40% of the full height (2.5 heads tall), short chunky torso, short legs. Do not make the body slim or tall.`
 - 持ち物が大きすぎるとき: `Make the prop smaller: no taller than his torso and no wider than his shoulders. His face and the center of his chest must stay fully visible.`
 - お手本とずれたとき: `Match the attached reference image exactly in line color, line thickness, head-to-body ratio, eye style and shading. Only change the character design.`
 
