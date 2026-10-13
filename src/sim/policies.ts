@@ -16,6 +16,11 @@ import {
   autoEquip,
   unequipAll,
   challenge,
+  challengeDungeon,
+  dungeonCleared,
+  dungeonUnlocked,
+  sweepDungeon,
+  sweepsLeft,
   claimDaily,
   claimMission,
   collectIdle,
@@ -155,6 +160,21 @@ function evenTargets(g: GameData, ctx: Content): Record<string, number> {
 }
 
 /** 画面を1回見たときの行動。挑戦を始めた場合は、戦闘が終わるまで次の行動はない。 */
+/**
+ * 本編で止まって待っているあいだに、ダンジョンの次の段階に挑む。
+ * 挑むのは、本編ですでに突破した強さの段階だけ（実際の人も、勝てそうなところから挑む）。
+ */
+function tryDungeon(g: GameData, nowMs: number, ctx: Content): GameData {
+  for (const d of ctx.params.dungeon.kinds) {
+    if (!dungeonUnlocked(g, d.id, ctx)) continue;
+    const t = d.tiers[dungeonCleared(g, d.id)];
+    if (!t || t.stage > g.highestCleared) continue;
+    const r = challengeDungeon(g, d.id, nowMs, ctx);
+    if (r.ok) return r.game;
+  }
+  return g;
+}
+
 export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy, memo: Memo): GameData {
   let g = game;
   if (g.battle !== null) return g;
@@ -165,6 +185,15 @@ export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy,
   if (pending.capped || pending.elapsedMs >= policy.collectAfterSec * 1000) {
     const r = collectIdle(g, nowMs, ctx);
     if (r.ok) g = r.game;
+  }
+
+  // 1b. ダンジョンの清掃（その日の回数を使い切る）
+  for (const d of ctx.params.dungeon.kinds) {
+    while (sweepsLeft(g, d.id, ctx) > 0) {
+      const r = sweepDungeon(g, d.id, ctx);
+      if (!r.ok) break;
+      g = r.game;
+    }
   }
 
   // 2. 達成したミッションと日課の報酬を受け取る
@@ -285,7 +314,7 @@ export function act(game: GameData, nowMs: number, ctx: Content, policy: Policy,
     } else {
       const trained = partyLevelSum(g) - memo.levelsAtDefeat >= policy.retryAfterLevels;
       const waited = nowMs - memo.defeatAtMs >= policy.retryAfterSec * 1000;
-      if (!trained && !waited) return g;
+      if (!trained && !waited) return tryDungeon(g, nowMs, ctx);
     }
   }
   const c = challenge(g, nowMs, ctx);

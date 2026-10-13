@@ -19,6 +19,7 @@ import {
   badges,
   companionJoinHtml,
   companionsHtml,
+  dungeonHtml,
   helpHtml,
   heroSelectedId,
   listOptionsHtml,
@@ -207,6 +208,16 @@ function start(): void {
         if (ui.result !== null && ui.result.type === "win") ui.result = { ...ui.result, companionId: id };
         feed(`${content.companionById[id]?.name ?? ""} が相棒になった`);
         openModal(() => companionJoinHtml(session.game(), content, id));
+      } else if (e.type === "dungeonWin") {
+        ui.result = { type: "dungeonWin", kind: e.kind, tier: e.tier, got: e.got };
+        const name = p.dungeon.kinds.find((d) => d.id === e.kind)?.name ?? "";
+        feed(`${name} 段階${e.tier} を突破`);
+        if (ui.tab !== "journey") toast(`${name} 段階${e.tier} を突破！`, "good");
+      } else if (e.type === "dungeonDefeat") {
+        ui.result = { type: "dungeonDefeat", kind: e.kind, tier: e.tier, timedOut: e.timedOut };
+        const name = p.dungeon.kinds.find((d) => d.id === e.kind)?.name ?? "";
+        feed(`${name} 段階${e.tier} で負け`);
+        if (ui.tab !== "journey") toast(`${name} 段階${e.tier} で負け…`, "bad");
       } else if (e.type === "dailyReset") {
         toast("日付が変わり、日課が入れ替わりました。");
       } else if (e.type === "allClear") {
@@ -230,8 +241,8 @@ function start(): void {
       if (key === fieldKey) return;
       fieldKey = key;
       battle.show({
-        stageText: stageLabel(rep.stage, p),
-        boss: isBossStage(rep.stage, p),
+        stageText: rep.title,
+        boss: !rep.dungeon && isBossStage(rep.stage, p),
         atMs: rep.startedAtMs,
         endsAtMs: rep.endsAtMs,
         replay: rep.replay,
@@ -247,13 +258,15 @@ function start(): void {
     }
     // 戦闘中でも、開き直したあとは再生用のデータがないので、顔ぶれだけ出して結果を待つ
     const stage = g.battle !== null ? g.battle.stage : nextStage(g, content);
+    const bd = g.battle?.dungeon;
+    const stageText = bd ? `${p.dungeon.kinds.find((d) => d.id === bd.kind)?.name ?? ""} 段階${bd.tier}` : stage === null ? "" : stageLabel(stage, p);
     const allies = allySpecs(g, content);
     const key = `preview|${g.battle !== null ? "wait" : ""}|${stage ?? "-"}|${companionName ?? "-"}|${allies.map((a) => `${a.key}:${a.row}:${a.hp}`).join(",")}`;
     if (key === fieldKey) return;
     fieldKey = key;
     battle.preview({
-      stageText: stage === null ? "" : stageLabel(stage, p),
-      boss: stage !== null && isBossStage(stage, p),
+      stageText,
+      boss: !bd && stage !== null && isBossStage(stage, p),
       allies,
       enemies: stage === null ? [] : enemySpecs(stage, content),
       companionName,
@@ -344,6 +357,8 @@ function start(): void {
       setHtml(panel, "panel", recruitHtml(g, content));
     } else if (ui.tab === "missions") {
       setHtml(panel, "panel", missionsHtml(g, content));
+    } else if (ui.tab === "dungeon") {
+      setHtml(panel, "panel", dungeonHtml(g, content));
     } else {
       setHtml(panel, "panel", otherHtml(g, content, ui, __DEBUG__ ? debugPanelHtml(ui.speed) : ""));
     }
@@ -403,6 +418,26 @@ function start(): void {
         const r = session.challenge();
         if (r.ok) ui.result = null;
         else fail(r.reason);
+        break;
+      }
+      case "dungeon-challenge": {
+        const r = session.challengeDungeon(el.dataset["kind"] ?? "");
+        if (r.ok) {
+          ui.result = null;
+          // 戦闘は旅の画面で見る
+          setTab("journey");
+        } else fail(r.reason);
+        break;
+      }
+      case "dungeon-sweep": {
+        const r = session.sweepDungeon(el.dataset["kind"] ?? "");
+        if (r.ok && r.got) {
+          const parts: string[] = [];
+          if (r.got.gold > 0) parts.push(`おひねり +${formatNumber(r.got.gold)}`);
+          if (r.got.mats > 0) parts.push(`相棒の素材 +${r.got.mats}`);
+          if (r.got.equips.length > 0) parts.push(`装備 +${r.got.equips.length}`);
+          toast(`清掃: ${parts.join("、")}`, "good");
+        } else fail(r.reason);
         break;
       }
       case "collect": {

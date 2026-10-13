@@ -39,9 +39,10 @@ import {
   maxPlus,
   memberStats,
   powerOf,
+  stageLabel,
   totalStages,
 } from "./params.ts";
-import type { BannerDef, BannerId, Content, DailyDef, DailyKind, EquipDef, EquipSlot, MemberDef, MemberRole, MissionDef, MissionKind, Reward } from "./params.ts";
+import type { BannerDef, BannerId, Content, DailyDef, DailyKind, DungeonDef, DungeonReward, EquipDef, EquipSlot, MemberDef, MemberRole, MissionDef, MissionKind, Reward } from "./params.ts";
 
 export const GAME_VERSION = 3;
 export const PARTY_SIZE = 6;
@@ -83,6 +84,18 @@ export interface BattleSlot {
   resolveAtMs: number;
   win: boolean;
   timedOut: boolean;
+  /** ダンジョンの戦闘なら、その種類と段階（本編の面なら、ない）。 */
+  dungeon?: { kind: string; tier: number };
+}
+
+/** ダンジョンの進み具合（種類ごと）。 */
+export interface DungeonProgress {
+  /** 突破した、いちばん上の段階（まだなければ 0）。 */
+  cleared: number;
+  /** 清掃した回数（sweepDay の日のうち）。 */
+  sweeps: number;
+  /** 最後に清掃した日（日付の通し番号）。 */
+  sweepDay: number;
 }
 
 /** 放置報酬のたまり具合。 */
@@ -176,8 +189,19 @@ export interface GameData {
   /** 報酬を受け取ったミッション。 */
   missionsClaimed: string[];
   daily: DailyState;
+  /** ダンジョン（種類ごと）。古いセーブにはないので、読み込むときに足す。 */
+  dungeons: Record<string, DungeonProgress>;
   rngState: number;
   stats: GameStats;
+}
+
+/** ダンジョンで手に入ったもの。 */
+export interface DungeonGot {
+  gold: number;
+  /** 持っている相棒それぞれに入った素材。 */
+  mats: number;
+  /** 手に入れた装備（種類）。 */
+  equips: string[];
 }
 
 /** 実際にもらえる量（「何分ぶん」を、その時点の数に直したもの）。 */
@@ -193,6 +217,8 @@ export type GameEvent =
   | { type: "win"; atMs: number; stage: number; reward: RewardAmounts; /** 初クリア報酬の装備（種類）。 */ equipDefId: string | null }
   | { type: "defeat"; atMs: number; stage: number; timedOut: boolean }
   | { type: "companion"; atMs: number; id: string }
+  | { type: "dungeonWin"; atMs: number; kind: string; tier: number; got: DungeonGot }
+  | { type: "dungeonDefeat"; atMs: number; kind: string; tier: number; timedOut: boolean }
   | { type: "dailyReset"; atMs: number }
   | { type: "clockBack"; atMs: number }
   | { type: "allClear"; atMs: number };
@@ -213,6 +239,12 @@ function zeroCounters(): Counters {
   return { challenges: 0, levelUps: 0, recruits: 0, promotes: 0, resets: 0, idleClaims: 0, companionLevelUps: 0, enhances: 0 };
 }
 
+function cloneDungeons(d: Record<string, DungeonProgress> | undefined): Record<string, DungeonProgress> {
+  const out: Record<string, DungeonProgress> = {};
+  for (const k of Object.keys(d ?? {})) out[k] = { ...((d as Record<string, DungeonProgress>)[k] as DungeonProgress) };
+  return out;
+}
+
 function clone(g: GameData): GameData {
   const members: Record<string, OwnedMember> = {};
   for (const id of Object.keys(g.members)) members[id] = { ...(g.members[id] as OwnedMember) };
@@ -231,6 +263,7 @@ function clone(g: GameData): GameData {
     recruit: { ...g.recruit, pity: { ...g.recruit.pity } },
     missionsClaimed: g.missionsClaimed.slice(),
     daily: { ...g.daily, counters: { ...g.daily.counters }, claimed: g.daily.claimed.slice() },
+    dungeons: cloneDungeons(g.dungeons),
     stats: { ...g.stats },
   };
 }
@@ -267,6 +300,7 @@ export function createGame(nowMs: number, seed: number, ctx: Content): GameData 
     recruit: { pity: {}, firstTenDone: false },
     missionsClaimed: [],
     daily: { dayKey: -1, counters: zeroCounters(), claims: 0, claimed: [] },
+    dungeons: {},
     rngState: seed >>> 0,
     stats: {
       battles: 0,
@@ -599,6 +633,10 @@ function resolveBattle(g: GameData, ctx: Content, events: GameEvent[]): void {
   const atMs = b.resolveAtMs;
   g.battle = null;
 
+  if (b.dungeon) {
+    resolveDungeon(g, b.dungeon.kind, b.dungeon.tier, b.win, b.timedOut, atMs, ctx, events);
+    return;
+  }
   if (!b.win) {
     g.stats.defeats += 1;
     if (g.stats.firstDefeatAtMs === null) g.stats.firstDefeatAtMs = atMs;
@@ -707,6 +745,134 @@ export function challenge(game: GameData, nowMs: number, ctx: Content): Challeng
   g.counters.challenges += 1;
   g.daily.counters.challenges += 1;
   return { game: g, ok: true, stage, startedAtMs, endsAtMs, replay, allies, enemies, companion };
+}
+
+// ---------------------------------------------------------------- ダンジョン
+//
+// 挑戦は何回でもできる。報酬が出るのは、その段階を初めて突破したときだけ。
+// 毎日の報酬は清掃（戦わずに受け取る。種類ごとに1日の回数が決まっている）で受け取る。清掃の報酬は、初回より少ない。
+
+function dungeonDef(kind: string, ctx: Content): DungeonDef | undefined {
+  return ctx.params.dungeon.kinds.find((d) => d.id === kind);
+}
+
+function dungeonProgress(g: GameData, kind: string): DungeonProgress {
+  return g.dungeons[kind] ?? { cleared: 0, sweeps: 0, sweepDay: -1 };
+}
+
+export function dungeonUnlocked(g: GameData, kind: string, ctx: Content): boolean {
+  const def = dungeonDef(kind, ctx);
+  return def !== undefined && g.highestCleared >= def.unlockStage;
+}
+
+/** 突破した、いちばん上の段階（まだなければ 0）。 */
+export function dungeonCleared(g: GameData, kind: string): number {
+  return dungeonProgress(g, kind).cleared;
+}
+
+/** 今日、あと何回清掃できるか。 */
+export function sweepsLeft(g: GameData, kind: string, ctx: Content): number {
+  const pr = dungeonProgress(g, kind);
+  const used = pr.sweepDay === g.daily.dayKey ? pr.sweeps : 0;
+  return Math.max(0, ctx.params.dungeon.sweepsPerDay - used);
+}
+
+/** 今日、すべてのダンジョンで清掃した回数の合計（日課が使う）。 */
+function sweepsToday(g: GameData): number {
+  let n = 0;
+  for (const pr of Object.values(g.dungeons)) if (pr.sweepDay === g.daily.dayKey) n += pr.sweeps;
+  return n;
+}
+
+/** 清掃できるダンジョンがあるか（画面の印に使う）。 */
+export function canSweepAny(g: GameData, ctx: Content): boolean {
+  return ctx.params.dungeon.kinds.some((d) => dungeonUnlocked(g, d.id, ctx) && dungeonCleared(g, d.id) > 0 && sweepsLeft(g, d.id, ctx) > 0);
+}
+
+/** 報酬の中身を、実際に手に入るものに直して渡す（装備は、ここで決まる）。 */
+function grantDungeon(g: GameData, reward: DungeonReward, ctx: Content): DungeonGot {
+  const got: DungeonGot = { gold: reward.gold ?? 0, mats: 0, equips: [] };
+  g.gold += got.gold;
+  if ((reward.mats ?? 0) > 0 && Object.keys(g.companions).length > 0) {
+    got.mats = reward.mats ?? 0;
+    for (const id of Object.keys(g.companions)) g.materials[id] = (g.materials[id] ?? 0) + got.mats;
+  }
+  const n = reward.equips ?? 0;
+  if (n > 0) {
+    const rng = createRng(g.rngState);
+    for (let i = 0; i < n; i++) {
+      const item = rollEquip(g, reward.equipChapter ?? 1, ctx, rng);
+      if (item) got.equips.push(item.defId);
+    }
+    g.rngState = rng.state();
+  }
+  return got;
+}
+
+function resolveDungeon(g: GameData, kind: string, tier: number, win: boolean, timedOut: boolean, atMs: number, ctx: Content, events: GameEvent[]): void {
+  const def = dungeonDef(kind, ctx);
+  const t = def?.tiers[tier - 1];
+  if (!def || !t) return;
+  if (!win) {
+    events.push({ type: "dungeonDefeat", atMs, kind, tier, timedOut });
+    return;
+  }
+  g.stats.wins += 1;
+  const pr = dungeonProgress(g, kind);
+  if (tier !== pr.cleared + 1) return;
+  g.dungeons[kind] = { ...pr, cleared: tier };
+  const got = grantDungeon(g, t.first, ctx);
+  events.push({ type: "dungeonWin", atMs, kind, tier, got });
+}
+
+/** ダンジョンの次の段階に挑戦する（何回でもできる）。 */
+export function challengeDungeon(game: GameData, kind: string, nowMs: number, ctx: Content): ChallengeResult {
+  const def = dungeonDef(kind, ctx);
+  if (!def) return { game, ok: false, reason: "そのダンジョンはありません" };
+  if (!dungeonUnlocked(game, kind, ctx)) return { game, ok: false, reason: `${stageLabel(def.unlockStage, ctx.params)} を突破すると開きます` };
+  if (game.battle !== null) return { game, ok: false, reason: "いま戦闘中です" };
+  const tier = dungeonCleared(game, kind) + 1;
+  const t = def.tiers[tier - 1];
+  if (!t) return { game, ok: false, reason: "すべての段階を突破しています" };
+  const allies = allySpecs(game, ctx);
+  if (allies.length === 0) return { game, ok: false, reason: "編成に団員がいません" };
+  const g = clone(game);
+  const enemies = enemySpecs(t.stage, ctx);
+  const companion = companionSpec(g, ctx);
+  const rng = createRng(g.rngState);
+  const replay = runBattle(allies, enemies, ctx.params.battle, rng, true, companion);
+  g.rngState = rng.state();
+  const bp = ctx.params.battle;
+  const startedAtMs = nowMs + Math.round(bp.introSec * 1000);
+  const endsAtMs = startedAtMs + Math.max(1000, Math.round(replay.durationSec * 1000));
+  const resolveAtMs = endsAtMs + Math.round(bp.resultSec * 1000);
+  g.battle = { stage: t.stage, startedAtMs, endsAtMs, resolveAtMs, win: replay.win, timedOut: replay.timedOut, dungeon: { kind, tier } };
+  g.stats.battles += 1;
+  g.stats.actions += 1;
+  return { game: g, ok: true, stage: t.stage, startedAtMs, endsAtMs, replay, allies, enemies, companion };
+}
+
+export interface SweepResult extends ActionResult {
+  tier?: number;
+  got?: DungeonGot;
+}
+
+/** 清掃: 突破した、いちばん上の段階の報酬（初回より少ない）を、戦わずに受け取る。1日の回数に限りがある。 */
+export function sweepDungeon(game: GameData, kind: string, ctx: Content): SweepResult {
+  const def = dungeonDef(kind, ctx);
+  if (!def) return { game, ok: false, reason: "そのダンジョンはありません" };
+  if (!dungeonUnlocked(game, kind, ctx)) return { game, ok: false, reason: `${stageLabel(def.unlockStage, ctx.params)} を突破すると開きます` };
+  const tier = dungeonCleared(game, kind);
+  const t = def.tiers[tier - 1];
+  if (tier === 0 || !t) return { game, ok: false, reason: "まだ、突破した段階がありません" };
+  if (sweepsLeft(game, kind, ctx) <= 0) return { game, ok: false, reason: "今日の清掃は、もう使い切りました" };
+  const g = clone(game);
+  const pr = dungeonProgress(g, kind);
+  const used = pr.sweepDay === g.daily.dayKey ? pr.sweeps : 0;
+  g.dungeons[kind] = { ...pr, sweeps: used + 1, sweepDay: g.daily.dayKey };
+  const got = grantDungeon(g, t.sweep, ctx);
+  g.stats.actions += 1;
+  return { game: g, ok: true, tier, got };
 }
 
 // ---------------------------------------------------------------- 育成
@@ -1214,11 +1380,18 @@ function missionProgress(kind: MissionKind, g: GameData): number {
       return equippedCount(g);
     case "enhances":
       return g.counters.enhances;
+    case "dungeonTier": {
+      let max = 0;
+      for (const pr of Object.values(g.dungeons)) if (pr.cleared > max) max = pr.cleared;
+      return max;
+    }
   }
 }
 
 function dailyProgress(kind: DailyKind, g: GameData): number {
-  return kind === "dailyClaims" ? g.daily.claims : g.daily.counters[kind];
+  if (kind === "dailyClaims") return g.daily.claims;
+  if (kind === "sweeps") return sweepsToday(g);
+  return g.daily.counters[kind];
 }
 
 export interface GoalView<T> {
@@ -1354,6 +1527,15 @@ export function isGameData(v: unknown): v is GameData {
   const daily = v["daily"];
   if (!isRecord(daily) || !isNum(daily["dayKey"]) || !isNum(daily["claims"]) || !isCounters(daily["counters"]) || !isStringList(daily["claimed"])) return false;
 
+  // ダンジョンは、あとから足したもの。古いセーブにはないので、あるときだけ形を確かめる
+  const dg = v["dungeons"];
+  if (dg !== undefined) {
+    if (!isRecord(dg)) return false;
+    for (const d of Object.values(dg)) {
+      if (!isRecord(d) || !isNum(d["cleared"]) || !isNum(d["sweeps"]) || !isNum(d["sweepDay"]) || d["cleared"] < 0 || d["sweeps"] < 0) return false;
+    }
+  }
+
   const s = v["stats"];
   if (!isRecord(s)) return false;
   for (const k of ["battles", "wins", "defeats", "actions", "lastProgressAtMs", "longestStallMs"]) {
@@ -1398,6 +1580,17 @@ export function sanitizeGame(game: GameData, ctx: Content): GameData {
     if (e.on !== null && !g.members[e.on]) e.on = null;
   }
   g.highestCleared = Math.min(g.highestCleared, totalStages(ctx.params));
-  if (g.battle !== null && g.battle.stage !== g.highestCleared + 1) g.battle = null;
+  // ダンジョン: 定義から消えた種類を外し、段階を定義の数に収める
+  const dungeons: Record<string, DungeonProgress> = {};
+  for (const d of ctx.params.dungeon.kinds) {
+    const pr = g.dungeons[d.id];
+    if (pr) dungeons[d.id] = { cleared: Math.min(Math.max(0, Math.floor(pr.cleared)), d.tiers.length), sweeps: Math.max(0, Math.floor(pr.sweeps)), sweepDay: pr.sweepDay };
+  }
+  g.dungeons = dungeons;
+  if (g.battle !== null) {
+    const bd = g.battle.dungeon;
+    const ok = bd ? dungeonDef(bd.kind, ctx)?.tiers[bd.tier - 1] !== undefined && bd.tier === dungeonCleared(g, bd.kind) + 1 : g.battle.stage === g.highestCleared + 1;
+    if (!ok) g.battle = null;
+  }
   return g;
 }

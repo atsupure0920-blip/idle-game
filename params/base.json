@@ -21,6 +21,47 @@
   },
   "economy": {"idleGoldBase": 420, "idleGoldGrowth": 1.1, "idleCapHours": 8, "firstClearMinutes": [0.5], "ticketStages": [], "firstClearMats": 1},
   "companion": {"levelCap": 30, "costMinutesBase": 3, "costMinutesGrowth": 1.15, "matBase": 5, "matGrowth": 1.25, "matPerHour": 6, "skillGrowth": 0.08},
+  "dungeon": {
+    "sweepsPerDay": 2,
+    "kinds": [
+      {"id": "gold", "name": "おひねりダンジョン", "unlockStage": 5, "tiers": [
+        {"stage": 3, "first": {"gold": 500}, "sweep": {"gold": 250}},
+        {"stage": 7, "first": {"gold": 1200}, "sweep": {"gold": 600}},
+        {"stage": 11, "first": {"gold": 3000}, "sweep": {"gold": 1500}},
+        {"stage": 15, "first": {"gold": 7000}, "sweep": {"gold": 3500}},
+        {"stage": 19, "first": {"gold": 15000}, "sweep": {"gold": 7500}},
+        {"stage": 23, "first": {"gold": 50000}, "sweep": {"gold": 25000}},
+        {"stage": 27, "first": {"gold": 120000}, "sweep": {"gold": 60000}},
+        {"stage": 31, "first": {"gold": 300000}, "sweep": {"gold": 150000}},
+        {"stage": 35, "first": {"gold": 600000}, "sweep": {"gold": 300000}},
+        {"stage": 39, "first": {"gold": 1200000}, "sweep": {"gold": 600000}}
+      ]},
+      {"id": "mats", "name": "相棒の素材ダンジョン", "unlockStage": 10, "tiers": [
+        {"stage": 3, "first": {"mats": 6}, "sweep": {"mats": 3}},
+        {"stage": 7, "first": {"mats": 8}, "sweep": {"mats": 4}},
+        {"stage": 11, "first": {"mats": 10}, "sweep": {"mats": 5}},
+        {"stage": 15, "first": {"mats": 12}, "sweep": {"mats": 6}},
+        {"stage": 19, "first": {"mats": 15}, "sweep": {"mats": 7}},
+        {"stage": 23, "first": {"mats": 18}, "sweep": {"mats": 9}},
+        {"stage": 27, "first": {"mats": 21}, "sweep": {"mats": 10}},
+        {"stage": 31, "first": {"mats": 25}, "sweep": {"mats": 12}},
+        {"stage": 35, "first": {"mats": 30}, "sweep": {"mats": 15}},
+        {"stage": 39, "first": {"mats": 35}, "sweep": {"mats": 17}}
+      ]},
+      {"id": "equip", "name": "装備ダンジョン", "unlockStage": 15, "tiers": [
+        {"stage": 3, "first": {"equips": 1, "equipChapter": 1}, "sweep": {"equips": 1, "equipChapter": 1}},
+        {"stage": 7, "first": {"equips": 2, "equipChapter": 1}, "sweep": {"equips": 1, "equipChapter": 1}},
+        {"stage": 11, "first": {"equips": 2, "equipChapter": 2}, "sweep": {"equips": 1, "equipChapter": 2}},
+        {"stage": 15, "first": {"equips": 2, "equipChapter": 2}, "sweep": {"equips": 1, "equipChapter": 2}},
+        {"stage": 19, "first": {"equips": 3, "equipChapter": 2}, "sweep": {"equips": 1, "equipChapter": 2}},
+        {"stage": 23, "first": {"equips": 3, "equipChapter": 3}, "sweep": {"equips": 2, "equipChapter": 3}},
+        {"stage": 27, "first": {"equips": 4, "equipChapter": 3}, "sweep": {"equips": 2, "equipChapter": 3}},
+        {"stage": 31, "first": {"equips": 4, "equipChapter": 3}, "sweep": {"equips": 2, "equipChapter": 3}},
+        {"stage": 35, "first": {"equips": 4, "equipChapter": 4}, "sweep": {"equips": 3, "equipChapter": 4}},
+        {"stage": 39, "first": {"equips": 5, "equipChapter": 4}, "sweep": {"equips": 3, "equipChapter": 4}}
+      ]}
+    ]
+  },
   "progress": {"chapters": 4, "stagesPerChapter": 10},
   "recruit": {
     "rarities": {

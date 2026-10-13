@@ -398,3 +398,11 @@ button.goal { cursor: pointer; min-height: 44px; }
 .list-state { margin-left: auto; font-size: 12px; color: var(--sub); white-space: nowrap; }
 .chips-wrap { flex-wrap: wrap; overflow: visible; }
 .help-list { display: flex; flex-direction: column; gap: 8px; padding-left: 1.1em; list-style: disc; font-size: 14px; }
+
+/* ダンジョン */
+.dg-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.dg-card.is-locked { opacity: 0.7; }
+.dg-card h3 { font-size: 15px; }
+.dg-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.dg-btns .btn { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.25; min-height: 56px; padding: 6px; white-space: normal; }
+.dg-btns .btn small { color: inherit; opacity: 0.85; font-size: 11px; }

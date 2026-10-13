@@ -10,6 +10,10 @@ import {
   FRONT_SIZE,
   allCleared,
   battleStats,
+  canSweepAny,
+  dungeonCleared,
+  dungeonUnlocked,
+  sweepsLeft,
   canAutoEquip,
   canAutoEquipParty,
   companionLevelInfo,
@@ -32,9 +36,9 @@ import {
   recruitRates,
   resetInfo,
 } from "../core/game.ts";
-import type { GameData, GoalView, OwnedEquip, RecruitOutcome, RewardAmounts } from "../core/game.ts";
+import type { DungeonGot, GameData, GoalView, OwnedEquip, RecruitOutcome, RewardAmounts } from "../core/game.ts";
 import { EQUIP_SLOTS, chapterOf, companionSkillPower, equipBonus, equipLevelCap, idleGoldPerMin, isBossStage, levelCap, maxPlus, stageLabel } from "../core/params.ts";
-import type { BannerId, CompanionDef, Content, DailyDef, EquipSlot, MemberDef, MissionDef } from "../core/params.ts";
+import type { BannerId, CompanionDef, Content, DailyDef, DungeonReward, EquipSlot, MemberDef, MissionDef } from "../core/params.ts";
 import {
   ROLE_LABEL,
   SLOT_LABEL,
@@ -54,7 +58,7 @@ import {
   starsText,
 } from "./texts.ts";
 
-export type Tab = "journey" | "members" | "party" | "companions" | "recruit" | "missions" | "other";
+export type Tab = "journey" | "members" | "party" | "companions" | "recruit" | "missions" | "dungeon" | "other";
 
 /** 下に並べるタブ。「その他」は、上の帯のボタンから開く。 */
 export const TABS: { id: Tab; label: string }[] = [
@@ -69,7 +73,9 @@ export const TABS: { id: Tab; label: string }[] = [
 /** 直前の挑戦の結果（旅の画面に出す）。 */
 export type LastResult =
   | { type: "win"; stage: number; reward: RewardAmounts; equipDefId: string | null; companionId: string | null }
-  | { type: "defeat"; stage: number; timedOut: boolean };
+  | { type: "defeat"; stage: number; timedOut: boolean }
+  | { type: "dungeonWin"; kind: string; tier: number; got: DungeonGot }
+  | { type: "dungeonDefeat"; kind: string; tier: number; timedOut: boolean };
 
 /** 団員のポップアップ（レベルの指定、装備の選択）の、いまの表示。 */
 export interface DetailState {
@@ -195,13 +201,15 @@ export function badges(g: GameData, ctx: Content, nowMs: number): Record<Tab, bo
   const companionWaiting = g.companionSlot === null && companionIds.length > 0;
   const pending = idlePending(g, nowMs, ctx);
   return {
-    journey: pending.capped || pending.elapsedMs >= BOX_BADGE_MS,
+    // 旅の画面には、箱と、ダンジョンの入口がある
+    journey: pending.capped || pending.elapsedMs >= BOX_BADGE_MS || canSweepAny(g, ctx),
     members: canTrainParty(g, ctx) || ids.some((id) => promoteInfo(g, id, ctx).ok) || canAutoEquipParty(g, ctx),
     party: g.party.includes(null) && hasBench,
     companions: companionWaiting || companionIds.some((id) => companionLevelInfo(g, id, ctx).ok),
     // 勧誘の印は、10連を回せるときだけ（1回ずつ回せるだけでは付けない）
     recruit: g.tickets >= 10 || g.premiumTickets >= 10,
     missions: claimableCount(g, ctx) > 0,
+    dungeon: canSweepAny(g, ctx),
     other: false,
   };
 }
@@ -230,8 +238,10 @@ function bossWord(stage: number, ctx: Content): string {
 function challengeHtml(g: GameData, ctx: Content, ui: UiState): string {
   const p = ctx.params;
   if (g.battle !== null) {
+    const bd = g.battle.dungeon;
+    const where = bd ? `${escapeHtml(dungeonName(bd.kind, ctx))} 段階${bd.tier}` : `${stageLabel(g.battle.stage, p)}${bossWord(g.battle.stage, ctx)}`;
     return (
-      `<div class="status" data-testid="status-text">${stageLabel(g.battle.stage, p)}${bossWord(g.battle.stage, ctx)} で戦闘中…</div>` +
+      `<div class="status" data-testid="status-text">${where} で戦闘中…</div>` +
       `<button type="button" class="btn btn-big" disabled data-testid="challenge-button">戦闘中</button>`
     );
   }
@@ -348,7 +358,9 @@ function goalsHtml(g: GameData, ctx: Content): string {
 export function journeyInfoHtml(g: GameData, ctx: Content, ui: UiState, nowMs: number): string {
   const parts: string[] = [];
   parts.push(`<div class="challenge">${challengeHtml(g, ctx, ui)}</div>`);
+  parts.push(dungeonResultHtml(ctx, ui));
   parts.push(boxHtml(g, ctx, nowMs));
+  parts.push(dungeonEntryHtml(g, ctx));
   parts.push(goalsHtml(g, ctx));
   parts.push(`<p class="hint" data-testid="hint">${escapeHtml(hintText(g, ctx, nowMs))}</p>`);
   parts.push(`<div class="mini">編成の戦力 <span data-testid="party-power">${formatNumber(partyPower(g, ctx))}</span></div>`);
@@ -358,11 +370,106 @@ export function journeyInfoHtml(g: GameData, ctx: Content, ui: UiState, nowMs: n
   return parts.join("");
 }
 
+// ---------------------------------------------------------------- ダンジョン
+
+function dungeonName(kind: string, ctx: Content): string {
+  return ctx.params.dungeon.kinds.find((d) => d.id === kind)?.name ?? kind;
+}
+
+function dungeonRewardText(r: DungeonReward): string {
+  const parts: string[] = [];
+  if ((r.gold ?? 0) > 0) parts.push(`おひねり ${formatNumber(r.gold ?? 0)}`);
+  if ((r.mats ?? 0) > 0) parts.push(`相棒の素材 ${r.mats}こ（相棒それぞれ）`);
+  if ((r.equips ?? 0) > 0) parts.push(`装備 ${r.equips}こ`);
+  return parts.join("、") || "なし";
+}
+
+function gotText(got: DungeonGot, ctx: Content): string {
+  const parts: string[] = [];
+  if (got.gold > 0) parts.push(`おひねり ${formatNumber(got.gold)}`);
+  if (got.mats > 0) parts.push(`相棒の素材 ${got.mats}こ（相棒それぞれ）`);
+  if (got.equips.length > 0) parts.push(`装備「${got.equips.map((id) => escapeHtml(ctx.equipById[id] ? equipName(ctx.equipById[id], 0) : id)).join("」「")}」`);
+  return parts.join("、") || "なし";
+}
+
+/** 旅の画面の、ダンジョンの入口。 */
+function dungeonEntryHtml(g: GameData, ctx: Content): string {
+  const open = ctx.params.dungeon.kinds.filter((d) => dungeonUnlocked(g, d.id, ctx));
+  const first = ctx.params.dungeon.kinds.slice().sort((a, b) => a.unlockStage - b.unlockStage)[0];
+  const note =
+    open.length === 0
+      ? first
+        ? `${stageLabel(first.unlockStage, ctx.params)} を突破すると開きます`
+        : ""
+      : canSweepAny(g, ctx)
+        ? "清掃できます"
+        : `${open.length}つ開いています`;
+  return (
+    `<button type="button" class="goal ${canSweepAny(g, ctx) ? "goal-ready" : ""}" data-action="tab" data-tab="dungeon" data-testid="goto-dungeon">` +
+    `<span>ダンジョン</span><span class="goal-go">${note} ›</span></button>`
+  );
+}
+
+/** 旅の画面に出す、ダンジョンの直前の結果。 */
+function dungeonResultHtml(ctx: Content, ui: UiState): string {
+  const r = ui.result;
+  if (r === null) return "";
+  if (r.type === "dungeonWin") {
+    return (
+      `<div class="result result-win" data-testid="result-dungeon-win"><b>${escapeHtml(dungeonName(r.kind, ctx))} 段階${r.tier} を突破！</b>` +
+      `<span class="mini">初回の報酬: ${gotText(r.got, ctx)}</span>` +
+      `<button type="button" class="btn btn-wide" data-action="tab" data-tab="dungeon" data-testid="back-dungeon">ダンジョンへ戻る</button></div>`
+    );
+  }
+  if (r.type === "dungeonDefeat") {
+    return (
+      `<div class="result result-lose" data-testid="result-dungeon-defeat"><b>${escapeHtml(dungeonName(r.kind, ctx))} 段階${r.tier} で負けました${r.timedOut ? "（時間切れ）" : ""}</b>` +
+      `<span>失ったものはありません。挑戦は何回でもできます。</span>` +
+      `<button type="button" class="btn btn-wide" data-action="tab" data-tab="dungeon" data-testid="back-dungeon">ダンジョンへ戻る</button></div>`
+    );
+  }
+  return "";
+}
+
+/** ダンジョンの画面。種類ごとに、次の段階への挑戦と、清掃。 */
+export function dungeonHtml(g: GameData, ctx: Content): string {
+  const p = ctx.params;
+  const busy = g.battle !== null;
+  const cards = p.dungeon.kinds.map((d) => {
+    const unlocked = dungeonUnlocked(g, d.id, ctx);
+    if (!unlocked) {
+      return (
+        `<div class="dg-card is-locked" data-testid="dungeon-${d.id}"><h3>${escapeHtml(d.name)}</h3>` +
+        `<p class="mini" data-testid="dungeon-lock-${d.id}">${stageLabel(d.unlockStage, p)} を突破すると開きます</p></div>`
+      );
+    }
+    const cleared = dungeonCleared(g, d.id);
+    const next = d.tiers[cleared];
+    const top = cleared > 0 ? d.tiers[cleared - 1] : undefined;
+    const left = sweepsLeft(g, d.id, ctx);
+    const challengeBtn = next
+      ? `<button type="button" class="btn btn-primary" data-action="dungeon-challenge" data-kind="${d.id}" data-testid="dungeon-challenge-${d.id}" ${busy ? "disabled" : ""}>` +
+        `<span>段階${cleared + 1}に挑戦</span><small>初回: ${dungeonRewardText(next.first)}</small></button>`
+      : `<p class="mini">すべての段階を突破しました。</p>`;
+    const sweepBtn = top
+      ? `<button type="button" class="btn ${left > 0 ? "btn-primary" : ""}" data-action="dungeon-sweep" data-kind="${d.id}" data-testid="dungeon-sweep-${d.id}" ${left > 0 ? "" : "disabled"}>` +
+        `<span>清掃（段階${cleared}）あと <b data-testid="dungeon-sweeps-${d.id}">${left}</b>回</span><small>${dungeonRewardText(top.sweep)}</small></button>`
+      : `<p class="mini">段階1を突破すると、清掃できるようになります。</p>`;
+    return (
+      `<div class="dg-card" data-testid="dungeon-${d.id}">` +
+      `<div class="row-between"><h3>${escapeHtml(d.name)}</h3><span class="mini">突破 <b data-testid="dungeon-cleared-${d.id}">${cleared}</b> / ${d.tiers.length}</span></div>` +
+      `<div class="dg-btns">${challengeBtn}${sweepBtn}</div>` +
+      `</div>`
+    );
+  });
+  return titleRow("ダンジョン", "dungeon") + (busy ? `<p class="mini" data-testid="dungeon-busy">戦闘中は、挑戦できません。</p>` : "") + cards.join("");
+}
+
 // ---------------------------------------------------------------- 説明（「？」）
 //
 // 注意書きは画面に並べず、各画面の「？」でまとめて見られるようにする（画面を圧迫しないため）。
 
-export type HelpTopic = "members" | "party" | "companions" | "recruit" | "missions";
+export type HelpTopic = "members" | "party" | "companions" | "recruit" | "missions" | "dungeon";
 
 const HELP_TITLE: Record<HelpTopic, string> = {
   members: "団員",
@@ -370,6 +477,7 @@ const HELP_TITLE: Record<HelpTopic, string> = {
   companions: "相棒",
   recruit: "勧誘",
   missions: "ミッションと日課",
+  dungeon: "ダンジョン",
 };
 
 function helpButton(topic: HelpTopic): string {
@@ -405,6 +513,14 @@ function helpNotes(g: GameData, ctx: Content, topic: HelpTopic): string[] {
     return [
       "各章のボスを倒すと、改心して相棒になります。持っているだけで団員全員が強くなり、編成に入れた1体は、戦闘中に技を使います。",
       `専用の素材は、箱に1時間あたり ${p.companion.matPerHour}こ 貯まるほか、初クリア報酬、ミッション、日課でも手に入ります。`,
+    ];
+  }
+  if (topic === "dungeon") {
+    return [
+      "挑戦は何回でもできます。報酬が出るのは、その段階を初めて突破したときだけです。負けても、失うものはありません。",
+      `清掃: 突破したいちばん上の段階の報酬を、戦わずに受け取れます。種類ごとに1日 ${p.dungeon.sweepsPerDay}回まで。日付が変わると戻ります。清掃の報酬は、初回より少なめです。`,
+      "上の段階ほど敵が強く、報酬が多くなります。編成と相棒は、本編と同じものを使います。",
+      ...p.dungeon.kinds.map((d) => `${d.name}: ${stageLabel(d.unlockStage, p)} を突破すると開きます。`),
     ];
   }
   if (topic === "recruit") {

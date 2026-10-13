@@ -41,7 +41,11 @@ import {
   canAutoEquip,
   battleStats,
   canAutoEquipParty,
+  canSweepAny,
   challenge,
+  challengeDungeon,
+  dungeonCleared,
+  dungeonUnlocked,
   claimDaily,
   claimMission,
   collectIdle,
@@ -75,6 +79,8 @@ import {
   resetInfo,
   resetLevel,
   sanitizeGame,
+  sweepDungeon,
+  sweepsLeft,
   setCompanion,
   setPartySlot,
   unequipAll,
@@ -120,6 +126,22 @@ const P: Params = {
     idleHoursPerItem: 2,
   },
   progress: { chapters: 2, stagesPerChapter: 4 },
+  dungeon: {
+    sweepsPerDay: 2,
+    kinds: [
+      {
+        id: "gold",
+        name: "おひねりダンジョン",
+        unlockStage: 1,
+        tiers: [
+          { stage: 1, first: { gold: 100 }, sweep: { gold: 40 } },
+          { stage: 2, first: { gold: 200 }, sweep: { gold: 80 } },
+        ],
+      },
+      { id: "mats", name: "素材ダンジョン", unlockStage: 1, tiers: [{ stage: 1, first: { mats: 5 }, sweep: { mats: 2 } }] },
+      { id: "equip", name: "装備ダンジョン", unlockStage: 2, tiers: [{ stage: 1, first: { equips: 3, equipChapter: 2 }, sweep: { equips: 1, equipChapter: 1 } }] },
+    ],
+  },
   recruit: {
     rarities: {
       n: { label: "★1", stars: 1, elite: false, statMult: 1, levelCap: 5 },
@@ -171,6 +193,7 @@ const MISSIONS: MissionDef[] = [
   { id: "m-clv", text: "相棒のレベルを1回上げる", kind: "companionLevelUps", target: 1, reward: { tickets: 1 } },
   { id: "m-gear", text: "装備を2つ付ける", kind: "equipped", target: 2, reward: { gold: 9 } },
   { id: "m-enh", text: "装備を1回強化する", kind: "enhances", target: 1, reward: { gold: 8 } },
+  { id: "m-dungeon", text: "ダンジョンの段階2を突破する", kind: "dungeonTier", target: 2, reward: { premiumTickets: 2 } },
 ];
 
 const DAILIES: DailyDef[] = [
@@ -1574,4 +1597,139 @@ test("模擬プレイ: 離れて戻ってきたあとの進み具合も、数え
   const r = simulate({ policy: "lazy", seed: 5, durationSec: 240, content: ctx, away: { awaySec: 8 * 3600, afterSec: 300 } });
   assert.ok(r.stagesGainedAfterAway !== null && r.stagesGainedAfterAway >= 0);
   assert.equal(simulate({ policy: "lazy", seed: 5, durationSec: 240, content: ctx }).stagesGainedAfterAway, null);
+});
+
+// ---------------------------------------------------------------- ダンジョン
+
+/** ダンジョンに挑戦して、結果が反映される時刻まで進める。 */
+function fightDungeon(game: GameData, kind: string, nowMs: number, ctx: Content, dayKey = 0): { game: GameData; events: GameEvent[]; atMs: number } {
+  const result = challengeDungeon(game, kind, nowMs, ctx);
+  assert.equal(result.ok, true, result.reason);
+  const atMs = (result.game.battle as BattleSlot).resolveAtMs;
+  const r = advance(result.game, atMs, dayKey, ctx);
+  return { game: r.game, events: r.events, atMs };
+}
+
+test("ダンジョン: 開く面を突破すると開く。報酬が出るのは、その段階を初めて突破したときだけ。本編の進みは変わらない", () => {
+  const ctx = easyContent();
+  let g = createGame(T0, 1, ctx);
+  const locked = challengeDungeon(g, "gold", T0, ctx);
+  assert.equal(locked.ok, false);
+  assert.match(locked.reason ?? "", /突破すると開きます/);
+  assert.equal(dungeonUnlocked(g, "gold", ctx), false);
+  const c = clearTo(g, T0, 1, ctx);
+  g = c.game;
+  assert.equal(dungeonUnlocked(g, "gold", ctx), true);
+  assert.equal(dungeonUnlocked(g, "equip", ctx), false, "装備ダンジョンは2面目のあと");
+  assert.equal(sweepDungeon(g, "gold", ctx).ok, false, "突破した段階がなければ、清掃できない");
+  assert.equal(canSweepAny(g, ctx), false);
+
+  const gold0 = g.gold;
+  const start = challengeDungeon(g, "gold", c.nowMs, ctx);
+  assert.ok(start.ok && start.game.battle?.dungeon?.tier === 1 && start.stage === 1);
+  assert.equal(challenge(start.game, c.nowMs, ctx).ok, false, "ダンジョンの戦闘中は、本編に挑戦できない");
+  assert.equal(challengeDungeon(start.game, "mats", c.nowMs, ctx).ok, false, "戦闘は1つずつ");
+  const r = advance(start.game, (start.game.battle as BattleSlot).resolveAtMs, 0, ctx);
+  const win = r.events.find((e) => e.type === "dungeonWin");
+  assert.ok(win && win.type === "dungeonWin" && win.kind === "gold" && win.tier === 1 && win.got.gold === 100);
+  assert.ok(!r.events.some((e) => e.type === "win"), "本編の勝ちにはならない");
+  g = r.game;
+  assert.equal(dungeonCleared(g, "gold"), 1);
+  assert.equal(g.gold, gold0 + 100);
+  assert.equal(g.highestCleared, 1, "本編の進みは変わらない");
+
+  const second = fightDungeon(g, "gold", r.game.lastActiveMs + 1000, ctx);
+  assert.ok(second.events.some((e) => e.type === "dungeonWin" && e.tier === 2));
+  g = second.game;
+  assert.equal(dungeonCleared(g, "gold"), 2);
+  assert.equal(g.gold, gold0 + 300);
+  const done = challengeDungeon(g, "gold", second.atMs + 1000, ctx);
+  assert.equal(done.ok, false, "すべての段階を突破したら、もう挑戦するところはない");
+  assert.ok(missionList(g, ctx).find((m) => m.def.id === "m-dungeon")?.claimable, "「段階2を突破」のミッションを達成");
+});
+
+test("ダンジョン: 負けても失うものはなく、何回でも挑み直せる", () => {
+  const ctx = hardContent();
+  let g = clearTo(createGame(T0, 1, ctx), T0, 1, ctx).game;
+  g = fightDungeon(g, "gold", g.lastActiveMs + 1000, ctx).game;
+  assert.equal(dungeonCleared(g, "gold"), 1);
+  const gold = g.gold;
+  for (let i = 0; i < 3; i++) {
+    const f = fightDungeon(g, "gold", g.lastActiveMs + 1000, ctx);
+    const lost = f.events.find((e) => e.type === "dungeonDefeat");
+    assert.ok(lost && lost.type === "dungeonDefeat" && lost.tier === 2, "段階2は勝てない数値");
+    g = f.game;
+  }
+  assert.equal(dungeonCleared(g, "gold"), 1);
+  assert.equal(g.gold, gold, "負けても、報酬もなく、失うものもない");
+  assert.equal(g.stats.defeats, 0, "本編の負けとは数えない");
+});
+
+test("清掃: 突破したいちばん上の段階の報酬（初回より少ない）を、戦わずに受け取る。1日2回まで。日付が変わると戻る", () => {
+  const easy = easyContent();
+  const ctx = buildContent({ ...DATA, params: easy.params, dailies: [...DAILIES, { id: "d-sweep", text: "清掃を2回する", kind: "sweeps", target: 2, reward: { tickets: 1 } }] });
+  let g = clearTo(createGame(T0, 1, ctx), T0, 1, ctx).game;
+  g = advance(g, g.lastActiveMs, 5, ctx).game;
+  g = fightDungeon(g, "gold", g.lastActiveMs + 1000, ctx, 5).game;
+  g = fightDungeon(g, "gold", g.lastActiveMs + 1000, ctx, 5).game;
+  assert.equal(canSweepAny(g, ctx), true);
+  assert.equal(sweepsLeft(g, "gold", ctx), 2);
+  const gold = g.gold;
+  const s1 = sweepDungeon(g, "gold", ctx);
+  assert.ok(s1.ok && s1.tier === 2 && s1.got?.gold === 80, "いちばん上の段階（2）の清掃の報酬");
+  assert.ok((s1.got?.gold ?? 0) < 200, "初回より少ない");
+  assert.equal(s1.game.battle, null, "戦わない");
+  assert.equal(sweepsLeft(s1.game, "gold", ctx), 1);
+  const s2 = sweepDungeon(s1.game, "gold", ctx);
+  assert.equal(s2.ok, true);
+  assert.equal(s2.game.gold, gold + 160);
+  const s3 = sweepDungeon(s2.game, "gold", ctx);
+  assert.equal(s3.ok, false, "1日2回まで");
+  assert.match(s3.reason ?? "", /使い切りました/);
+  assert.equal(sweepsLeft(s2.game, "mats", ctx), 2, "回数は種類ごと");
+  assert.equal(canSweepAny(s2.game, ctx), false, "素材ダンジョンは、まだ突破した段階がない");
+  assert.ok(dailyList(s2.game, ctx).find((d) => d.def.id === "d-sweep")?.claimable, "日課「清掃を2回する」を達成");
+  // 挑戦は、清掃を使い切っても何回でもできる（すべて突破していれば、挑む段階はない）
+  const next = advance(s2.game, s2.game.lastActiveMs + 1000, 6, ctx);
+  assert.ok(next.events.some((e) => e.type === "dailyReset"));
+  assert.equal(sweepsLeft(next.game, "gold", ctx), 2, "日付が変わると戻る");
+  assert.equal(sweepDungeon(next.game, "gold", ctx).ok, true);
+});
+
+test("ダンジョン: 素材は持っている相棒それぞれに入る。装備は決まった数だけ手に入る", () => {
+  const ctx = easyContent();
+  let g = clearTo(createGame(T0, 1, ctx), T0, 4, ctx).game;
+  assert.ok(Object.keys(g.companions).length === 1, "4面目のボスで、相棒が1体");
+  const before = g.materials["c1"] ?? 0;
+  const f = fightDungeon(g, "mats", g.lastActiveMs + 1000, ctx);
+  const win = f.events.find((e) => e.type === "dungeonWin");
+  assert.ok(win && win.type === "dungeonWin" && win.got.mats === 5);
+  g = f.game;
+  assert.equal(g.materials["c1"], before + 5);
+  const owned = g.equips.length;
+  const e = fightDungeon(g, "equip", g.lastActiveMs + 1000, ctx);
+  const ew = e.events.find((x) => x.type === "dungeonWin");
+  assert.ok(ew && ew.type === "dungeonWin" && ew.got.equips.length === 3);
+  assert.equal(e.game.equips.length, owned + 3);
+  // equipChapter 2 は ★2 しか出ない数値
+  assert.ok(e.game.equips.slice(owned).every((x) => (C.equipById[x.defId]?.stars ?? 0) === 2));
+});
+
+test("ダンジョン: 記録のない古いセーブも読め、開き直しても続きから。戦闘中に閉じても壊れない", () => {
+  const ctx = easyContent();
+  let g = clearTo(createGame(T0, 1, ctx), T0, 1, ctx).game;
+  const old = { ...g } as Partial<GameData>;
+  delete old.dungeons;
+  assert.equal(isGameData(old), true, "ダンジョンの記録がなくても、正しい形");
+  const fixed = sanitizeGame(old as GameData, ctx);
+  assert.deepEqual(fixed.dungeons, {});
+  g = fightDungeon(fixed, "gold", fixed.lastActiveMs + 1000, ctx).game;
+  const started = challengeDungeon(g, "gold", g.lastActiveMs + 1000, ctx).game;
+  const text = serialize({ ...createInitialState(T0, 1), game: started }, T0);
+  const back = deserialize(text);
+  assert.equal(back.kind, "ok");
+  const again = sanitizeGame((back as { state: { game: GameData } }).state.game, ctx);
+  assert.deepEqual(again.dungeons, started.dungeons);
+  assert.deepEqual(again.battle?.dungeon, { kind: "gold", tier: 2 }, "戦闘中の記録も残る");
+  assert.equal(isGameData({ ...g, dungeons: { gold: { cleared: -1, sweeps: 0, sweepDay: 0 } } }), false, "形の壊れた記録は読まない");
 });

@@ -41,6 +41,7 @@ import {
   hintText,
   journeyInfoHtml,
   journeyLive,
+  dungeonHtml,
   helpHtml,
   listOptionsHtml,
   memberModalHtml,
@@ -213,7 +214,8 @@ function renderAll(s: Session, ctx: Content, result: LastResult | null = null): 
     membersHtml(g, ctx, HERO),
     membersHtml(g, ctx, { ...HERO, sort: "level" }),
     listOptionsHtml(g, ctx, HERO),
-    ...(["members", "party", "companions", "recruit", "missions"] as const).map((topic) => helpHtml(g, ctx, topic)),
+    ...(["members", "party", "companions", "recruit", "missions", "dungeon"] as const).map((topic) => helpHtml(g, ctx, topic)),
+    dungeonHtml(g, ctx),
     ...(["1", "2", "3", "elite"] as const).map((filter) => membersHtml(g, ctx, { ...HERO, filter })),
     partyHtml(g, ctx, { ...ui, selectedSlot: 0 }),
     partyHtml(g, ctx, ui),
@@ -523,6 +525,65 @@ test("印: 勧誘の印は、10連を回せるだけチケットがあるとき�
   assert.match(membersHtml(g, ctx, { ...HERO, filter: "3", sort: "level" }), /★3・レベル順/);
 });
 
+test("ダンジョン: 開く → 挑戦（何回でも）→ 初めて突破すると報酬 → 清掃は1日2回まで → 日付が変わると戻る", () => {
+  const ctx = loadContent(".");
+  const w = world();
+  const s = createSession(w.deps, ctx);
+  s.tick();
+  const gold = ctx.params.dungeon.kinds.find((d) => d.id === "gold");
+  assert.ok(gold, "おひねりダンジョンがある");
+  assert.equal(s.challengeDungeon("gold").ok, false, "開く前は挑戦できない");
+  assert.match(dungeonHtml(s.game(), ctx), /を突破すると開きます/);
+  progressTo(w, s, ctx, gold.unlockStage);
+  assert.ok(dungeonHtml(s.game(), ctx).includes('data-testid="dungeon-challenge-gold"'));
+  assert.equal(s.sweepDungeon("gold").ok, false, "突破した段階がなければ、清掃できない");
+
+  // 挑戦: 戦闘は本編と同じく、結果が出るまで待つ。勝つと初回の報酬
+  const before = s.game().gold;
+  const c = s.challengeDungeon("gold");
+  assert.ok(c.ok);
+  const rep = s.replay();
+  assert.ok(rep !== null && rep.dungeon && rep.title.includes("段階1"), "画面に出す名前は、ダンジョンと段階");
+  assert.equal(s.challenge().ok, false, "ダンジョンの戦闘中は、本編に挑戦できない");
+  assert.match(journeyInfoHtml(s.game(), ctx, uiState(), s.now()), /おひねりダンジョン 段階1 で戦闘中/);
+  const r = run(w, s, 120, () => s.game().battle === null);
+  const win = r.events.find((e) => e.type === "dungeonWin");
+  assert.ok(win && win.type === "dungeonWin" && win.tier === 1);
+  assert.equal(win.got.gold, gold.tiers[0]?.first.gold);
+  assert.equal(s.game().gold, before + (gold.tiers[0]?.first.gold ?? 0));
+  assert.match(journeyInfoHtml(s.game(), ctx, uiState({ type: "dungeonWin", kind: "gold", tier: 1, got: win.got }), s.now()), /段階1 を突破！/);
+  assert.match(journeyInfoHtml(s.game(), ctx, uiState({ type: "dungeonDefeat", kind: "gold", tier: 2, timedOut: false }), s.now()), /挑戦は何回でもできます/);
+  assert.equal(badges(s.game(), ctx, s.now()).journey, true, "清掃できるので、旅に印が付く");
+
+  // 清掃: 初回より少ない報酬を、戦わずに。1日2回まで
+  const sweep = gold.tiers[0]?.sweep.gold ?? 0;
+  assert.ok(sweep > 0 && sweep < (gold.tiers[0]?.first.gold ?? 0), "清掃の報酬は、初回より少ない");
+  const g0 = s.game().gold;
+  assert.equal(s.sweepDungeon("gold").ok, true);
+  assert.equal(s.sweepDungeon("gold").ok, true);
+  assert.equal(s.sweepDungeon("gold").ok, false, "3回目はできない");
+  assert.equal(s.game().gold, g0 + sweep * 2);
+  assert.equal(s.game().battle, null, "清掃は戦わない");
+  assert.ok(dungeonHtml(s.game(), ctx).includes('data-testid="dungeon-sweeps-gold">0<'));
+  assert.ok(dailyList(s.game(), ctx).find((d) => d.def.kind === "sweeps")?.claimable, "日課「清掃を2回」を達成");
+  // 挑戦は、清掃を使い切っても何回でもできる
+  assert.equal(s.challengeDungeon("gold").ok, true);
+  run(w, s, 120, () => s.game().battle === null);
+
+  // 日付が変わると、清掃の回数が戻る
+  w.clock.now += DAY;
+  s.tick();
+  assert.ok(dungeonHtml(s.game(), ctx).includes('data-testid="dungeon-sweeps-gold">2<'));
+  assert.equal(s.sweepDungeon("gold").ok, true);
+
+  // 開き直しても、ダンジョンの記録は残る
+  s.save();
+  const again = createSession(w.deps, ctx);
+  assert.deepEqual(again.game().dungeons, s.game().dungeons);
+  const lines = playLogLines(s.playLog(), s.game(), ctx).join("\n");
+  for (const word of ["おひねりダンジョン 段階1 を突破", "清掃: おひねりダンジョン", "ダンジョンに挑戦"]) assert.ok(lines.includes(word), `プレイの記録に「${word}」がある`);
+});
+
 test("日課: 端末の日付が変わると入れ替わる。同じ日のうちは、受け取りが残る", () => {
   const ctx = loadContent(".");
   const w = world();
@@ -779,6 +840,9 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
   s.debugGrant({ gold: 5_000_000, tickets: 30, premiumTickets: 30 });
   // 昇格できる団員が残るように、かけらを使わずにおく（tidy は昇格しない）
   progressTo(w, s, ctx, 12);
+  // ダンジョンの段階1を突破しておく（清掃のボタンが出る）
+  assert.equal(s.challengeDungeon("gold").ok, true);
+  run(w, s, 120, () => s.game().battle === null);
   run(w, s, 20 * 60);
   const g = s.game();
   const outcomes = [{ id: "h_star", duplicate: true }, { id: "h_leader", duplicate: false }];
@@ -817,6 +881,13 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     "help-companions",
     "help-recruit",
     "help-missions",
+    "help-dungeon",
+    "goto-dungeon",
+    "dungeon-gold",
+    "dungeon-challenge-gold",
+    "dungeon-sweep-gold",
+    "dungeon-sweeps-gold",
+    "dungeon-cleared-gold",
     "help-title",
     "help-list",
     "members-gold",

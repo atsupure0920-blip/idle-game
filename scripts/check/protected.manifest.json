@@ -18,14 +18,14 @@
     "scripts/lib/source-hash.ts": "ff10f7c88acfed5478118e8c5b0e1e5d53ade37ecfafeb615960c1855bce77f0",
     "scripts/vm/run.sh": "533c59336b7b763d55419714815b456ee904f48d617cf742cbc2d3021a2ea70f",
     "spec/ACCEPTANCE.yaml": "45007114aded649eda38c3478043b484e1fc481ab1887fccd4458ea6a171e62f",
-    "spec/CORE_LOOP_CONTRACT.md": "a8a73c3cebfcfa57dabab33829f70b3fc1d22dcba05d7003acf8aaeec1dfe4d6",
+    "spec/CORE_LOOP_CONTRACT.md": "6a69f48af335d964fa4d93404bb8d7c7922cf6ae91723a96a07942242f9081d1",
     "tests/core.test.ts": "67a8a8bd4b00d883fa0bd552bce17a99b2628b06c765dbe7c2e4683251e52546",
-    "tests/e2e/run.ts": "f9bca851479795914553f28f353f568283864d370c13130f7085c191613d9e58",
+    "tests/e2e/run.ts": "845e0c8f3713df55c3905eb95414403962ffaf97c1564b9ab33425e946299416",
     "tests/fixtures/save-build-4.json": "4b00e45f19e050d872444949679a3530473e89e19aa14042b4ebf1a2d8e1f8a0",
     "tests/fixtures/save-build-5.json": "b78c2c4ea7cab4b5c234ecdb75bd0d8f6e0a8497c5f55b5b5d1d3899174147ea",
     "tests/fixtures/save-build-6.json": "4f294e00750c18f5fc0d4390564c0d8bbfdb80972024ba44d0a1bffb620aff79",
-    "tests/flow.test.ts": "dd4d29fb49c64000d4f3046dd3b65bda9a301ee56e65c6ec2b4ae7e6e94bd64a",
-    "tests/game.test.ts": "4a857acc2c8a8c9985912d97a09b6f54c65e3b1a9cc0fb21dca60e9d26682531",
+    "tests/flow.test.ts": "93ad7508bb293a09fb1dadee835bf38438e548ce840d7b9751b4898677bdae8f",
+    "tests/game.test.ts": "d60186610fa0a4a885afc90fd036624562de1f397957d240d4ce21c9fbf6f209",
     "tsconfig.core.json": "0a0f18608c5eff846926e9083c47b7dbf8b53e7e262b39051853578678fe6e25",
     "tsconfig.json": "20729cadc6a64190bf6266460d4d9af5257dbd187bf8eb1560fddf80606b8acd"
   }

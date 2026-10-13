@@ -661,6 +661,38 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await page.waitForSelector(tid("companion-unequip-c_bear"));
   }, true);
 
+  await step("ダンジョン: 旅の画面から開き、挑戦して突破すると報酬。清掃は戦わずに1日2回まで", async () => {
+    await setSpeed(page, SPEED);
+    await page.locator(tid("goto-dungeon")).click();
+    await page.waitForSelector(tid("dungeon-gold"));
+    expect((await text(page, "dungeon-cleared-gold")) === "0", "まだ突破していないはず");
+    await checkLayout(page, "ダンジョン");
+    await shot(page, "15b-dungeon");
+    const gold = Number((await savedGame(page))?.["gold"]);
+    await page.locator(tid("dungeon-challenge-gold")).click();
+    // 戦闘は旅の画面で見る
+    await page.waitForSelector(tid("result-dungeon-win"), { timeout: 40_000 });
+    expect(Number((await savedGame(page))?.["gold"]) > gold || (await text(page, "result-dungeon-win")).includes("おひねり"), "初回の報酬が出ていない");
+    await setSpeed(page, 1);
+    await page.locator(tid("goto-dungeon")).click();
+    await page.waitForSelector(tid("dungeon-sweeps-gold"));
+    expect((await text(page, "dungeon-cleared-gold")) === "1", "段階1を突破していない");
+    expect((await text(page, "dungeon-sweeps-gold")) === "2", "清掃の回数が2回ではない");
+    const g0 = Number((await savedGame(page))?.["gold"]);
+    await page.locator(tid("dungeon-sweep-gold")).click();
+    await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "1", tid("dungeon-sweeps-gold"));
+    await page.locator(tid("dungeon-sweep-gold")).click();
+    await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "0", tid("dungeon-sweeps-gold"));
+    expect(await page.locator(tid("dungeon-sweep-gold")).isDisabled(), "3回目の清掃が押せる");
+    expect(Number((await savedGame(page))?.["gold"]) > g0, "清掃しても、おひねりが増えていない");
+    expect((await page.locator(`${tid("dungeon-challenge-gold")}:not([disabled])`).count()) === 1, "清掃を使い切ったら、挑戦もできなくなった");
+    await page.locator(tid("help-dungeon")).click();
+    await page.waitForSelector(tid("help-list"));
+    expect((await text(page, "help-list")).includes("何回でも"), "「？」に、ダンジョンの説明が出ていない");
+    await closeModal(page);
+    await shot(page, "15c-dungeon-swept");
+  }, true);
+
   await step("通常勧誘: 1回と10連。エリートは出ない", async () => {
     // 手持ちの通常チケットをそろえる（ミッションの報酬で、すでに何枚か持っていることがある）
     await grant(page, "dbg-ticket", 2);
@@ -773,11 +805,15 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     expect((await savedEquips(page)).length === owned + 4, "箱の装備が、手持ちに入っていない");
   }, true);
 
-  await step("日付が変わると、日課が入れ替わる", async () => {
+  await step("日付が変わると、日課が入れ替わり、ダンジョンの清掃の回数が戻る", async () => {
     await grant(page, "dbg-time-1d", 1);
     await tab(page, "missions");
     await page.waitForFunction((sel) => !(document.querySelector(sel)?.textContent ?? "").includes("受け取り済み"), tid("daily-list"), { timeout: 5_000 });
     expect((await text(page, "mission-list")) !== "", "ミッションの一覧が消えた");
+    await tab(page, "journey");
+    await page.locator(tid("goto-dungeon")).click();
+    await page.waitForSelector(tid("dungeon-sweeps-gold"));
+    expect((await text(page, "dungeon-sweeps-gold")) === "2", "日付が変わっても、清掃の回数が戻らない");
   }, true);
 
   await step("セーブの書き出しと読み込みができ、壊れた文字は読み込まない", async () => {
@@ -814,6 +850,8 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
       "リセット: 花形役者",
       "おまかせ装備（1人）",
       "装備を全部外す: ",
+      "おひねりダンジョン 段階1 を突破",
+      "清掃: おひねりダンジョン",
       "装備の強化",
       "もりのくま が相棒になる",
       "デバッグ機能の使用: あり",

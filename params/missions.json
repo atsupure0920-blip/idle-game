@@ -20,12 +20,14 @@
   {"id": "companion-lv-1", "text": "相棒のレベルを1回上げる", "kind": "companionLevelUps", "target": 1, "reward": {"goldMin": 5}},
   {"id": "partylv-90", "text": "編成のレベルの合計を90にする", "kind": "partyLevel", "target": 90, "reward": {"tickets": 2}},
   {"id": "clear-12", "text": "2-2 を突破する", "kind": "clear", "target": 12, "reward": {"tickets": 2}},
+  {"id": "dungeon-3", "text": "どれかのダンジョンで、段階3を突破する", "kind": "dungeonTier", "target": 3, "reward": {"tickets": 3}},
   {"id": "level-20", "text": "団員の誰かをレベル20にする", "kind": "memberLevel", "target": 20, "reward": {"goldMin": 4}},
   {"id": "recruits-50", "text": "勧誘を合計50回する", "kind": "recruits", "target": 50, "reward": {"premiumTickets": 3}},
   {"id": "clear-15", "text": "2-5 を突破する", "kind": "clear", "target": 15, "reward": {"tickets": 2}},
   {"id": "enhance-10", "text": "装備を合計10回強化する", "kind": "enhances", "target": 10, "reward": {"tickets": 2}},
   {"id": "promote-3", "text": "団員を合計3回昇格させる", "kind": "promotes", "target": 3, "reward": {"tickets": 2}},
   {"id": "clear-18", "text": "2-8 を突破する", "kind": "clear", "target": 18, "reward": {"tickets": 2}},
+  {"id": "dungeon-5", "text": "どれかのダンジョンで、段階5を突破する", "kind": "dungeonTier", "target": 5, "reward": {"tickets": 5}},
   {"id": "equip-24", "text": "編成の団員に、装備を合計24こ付ける", "kind": "equipped", "target": 24, "reward": {"goldMin": 5}},
   {"id": "partylv-150", "text": "編成のレベルの合計を150にする", "kind": "partyLevel", "target": 150, "reward": {"tickets": 2}},
   {"id": "clear-20", "text": "2-10 のボスを倒す", "kind": "clear", "target": 20, "reward": {"premiumTickets": 5}},
@@ -44,5 +46,6 @@
   {"id": "level-40", "text": "団員の誰かをレベル40にする", "kind": "memberLevel", "target": 40, "reward": {"tickets": 5}},
   {"id": "clear-35", "text": "4-5 を突破する", "kind": "clear", "target": 35, "reward": {"tickets": 10}},
   {"id": "recruits-200", "text": "勧誘を合計200回する", "kind": "recruits", "target": 200, "reward": {"premiumTickets": 10}},
-  {"id": "clear-40", "text": "4-10 のボスを倒す", "kind": "clear", "target": 40, "reward": {"premiumTickets": 10}}
+  {"id": "clear-40", "text": "4-10 のボスを倒す", "kind": "clear", "target": 40, "reward": {"premiumTickets": 10}},
+  {"id": "dungeon-10", "text": "どれかのダンジョンで、段階10を突破する", "kind": "dungeonTier", "target": 10, "reward": {"premiumTickets": 3}}
 ]

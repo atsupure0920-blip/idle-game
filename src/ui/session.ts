@@ -12,6 +12,7 @@ import {
   advance,
   autoEquip,
   challenge,
+  challengeDungeon,
   claimDaily,
   claimMission,
   collectIdle,
@@ -30,6 +31,7 @@ import {
   sanitizeGame,
   setCompanion,
   setPartySlot,
+  sweepDungeon,
   unequipAll,
   unequipItem,
 } from "../core/game.ts";
@@ -38,12 +40,14 @@ import type {
   AutoEquipResult,
   ChallengeResult,
   ClaimResult,
+  DungeonGot,
   CollectResult,
   GameData,
   GameEvent,
   LevelUpResult,
   RecruitResult,
   ResetResult,
+  SweepResult,
   UnequipAllResult,
 } from "../core/game.ts";
 import { stageLabel } from "../core/params.ts";
@@ -93,6 +97,10 @@ export interface PlayLog {
 /** 進行中の戦闘の、再生用のデータ。この起動のあいだに挑戦した戦闘だけ（開き直すと、なくなる）。 */
 export interface BattleReplay {
   stage: number;
+  /** 画面に出す名前（「1-3」や「おひねりダンジョン 段階2」）。 */
+  title: string;
+  /** ダンジョンの戦闘か。 */
+  dungeon: boolean;
   startedAtMs: number;
   endsAtMs: number;
   replay: BattleResult;
@@ -135,6 +143,10 @@ export interface Session {
   /** 時間を進める。画面は 0.2 秒ごとに呼ぶ。起きた出来事を返す。 */
   tick: () => GameEvent[];
   challenge: () => ChallengeResult;
+  /** ダンジョンの次の段階に挑戦する。 */
+  challengeDungeon: (kind: string) => ChallengeResult;
+  /** ダンジョンの清掃（戦わずに報酬を受け取る）。 */
+  sweepDungeon: (kind: string) => SweepResult;
   collectIdle: () => CollectResult;
   /** 団員を、指定のレベルまで上げる（+1、+10、レベルの指定）。 */
   levelUpTo: (id: string, target: number, how: LevelHow) => LevelUpResult;
@@ -287,6 +299,14 @@ export function createSession(deps: SessionDeps, content: Content): Session {
   const starsOf = (id: string): number => content.params.recruit.rarities[content.byId[id]?.rarity ?? ""]?.stars ?? 0;
   const isElite = (id: string): boolean => content.params.recruit.rarities[content.byId[id]?.rarity ?? ""]?.elite === true;
 
+  const dungeonName = (kind: string): string => content.params.dungeon.kinds.find((d) => d.id === kind)?.name ?? kind;
+  const gotText = (got: DungeonGot): string => {
+    const parts: string[] = [];
+    if (got.gold > 0) parts.push(`おひねり +${got.gold}`);
+    if (got.mats > 0) parts.push(`相棒の素材 +${got.mats}`);
+    if (got.equips.length > 0) parts.push(`装備 ${got.equips.length}こ`);
+    return parts.join("、") || "なし";
+  };
   let replay: BattleReplay | null = null;
   /** 最後に負けた面（再挑戦かどうかを、記録に残すため）。 */
   let lastDefeatStage = 0;
@@ -302,6 +322,8 @@ export function createSession(deps: SessionDeps, content: Content): Session {
         lastDefeatStage = e.stage;
         mark(`${label(e.stage)} で負け${e.timedOut ? "（時間切れ）" : ""}（編成のレベル合計 ${partyLevels(game)}）`);
       } else if (e.type === "companion") mark(`${content.companionById[e.id]?.name ?? e.id} が相棒になる`);
+      else if (e.type === "dungeonWin") mark(`${dungeonName(e.kind)} 段階${e.tier} を突破（${gotText(e.got)}）`);
+      else if (e.type === "dungeonDefeat") mark(`${dungeonName(e.kind)} 段階${e.tier} で負け${e.timedOut ? "（時間切れ）" : ""}（編成のレベル合計 ${partyLevels(game)}）`);
       else if (e.type === "dailyReset") mark("日付が変わり、日課が入れ替わった");
       else if (e.type === "clockBack") mark("端末の時計が戻っていた");
       else if (e.type === "allClear") mark("すべての面を突破");
@@ -383,9 +405,22 @@ export function createSession(deps: SessionDeps, content: Content): Session {
     challenge: () => {
       const r = act("挑戦", (g) => challenge(g, now(), content));
       if (r.ok && r.stage !== undefined && r.replay && r.allies && r.enemies && r.startedAtMs !== undefined && r.endsAtMs !== undefined) {
-        replay = { stage: r.stage, startedAtMs: r.startedAtMs, endsAtMs: r.endsAtMs, replay: r.replay, allies: r.allies, enemies: r.enemies, companion: r.companion ?? null };
+        replay = { stage: r.stage, title: label(r.stage), dungeon: false, startedAtMs: r.startedAtMs, endsAtMs: r.endsAtMs, replay: r.replay, allies: r.allies, enemies: r.enemies, companion: r.companion ?? null };
         if (r.stage === lastDefeatStage) mark(`再挑戦: ${label(r.stage)}（編成のレベル合計 ${partyLevels(game)}）`);
       }
+      return r;
+    },
+    challengeDungeon: (kind) => {
+      const r = act("ダンジョンに挑戦", (g) => challengeDungeon(g, kind, now(), content));
+      if (r.ok && r.stage !== undefined && r.replay && r.allies && r.enemies && r.startedAtMs !== undefined && r.endsAtMs !== undefined) {
+        const tier = game.battle?.dungeon?.tier ?? 0;
+        replay = { stage: r.stage, title: `${dungeonName(kind)} 段階${tier}`, dungeon: true, startedAtMs: r.startedAtMs, endsAtMs: r.endsAtMs, replay: r.replay, allies: r.allies, enemies: r.enemies, companion: r.companion ?? null };
+      }
+      return r;
+    },
+    sweepDungeon: (kind) => {
+      const r = act("清掃", (g) => sweepDungeon(g, kind, content));
+      if (r.ok && r.got) mark(`清掃: ${dungeonName(kind)} 段階${r.tier ?? 0}（${gotText(r.got)}）`);
       return r;
     },
     collectIdle: () => {

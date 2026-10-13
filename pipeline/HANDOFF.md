@@ -21,8 +21,8 @@
 | 保留にした要望 | `pipeline/BACKLOG.md` |
 | 承認の記録 | `pipeline/APPROVALS.md` |
 | 最初の30分の計算結果 | 第3版は `pipeline/reports/S3-v3-first30.md`（第2版は `S3-v2-first30.md`、第1版は `S2-first30.md`） |
-| いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015〜D-017（第2版は D-013、D-014）。数値の宿題は `feedback/F-018.md` |
-| 作り直しの経緯と、ユーザーの回答 | `spec/REVISION-1.md`（決定16〜27）、`spec/REVISION-2.md`（決定28〜41）、`spec/REVISION-3.md`（決定42〜52、ダンジョンと清掃） |
+| いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015〜D-018（第2版は D-013、D-014）。数値の宿題は `feedback/F-018.md` |
+| 作り直しの経緯と、ユーザーの回答 | `spec/REVISION-1.md`（決定16〜27）、`spec/REVISION-2.md`（決定28〜41）、`spec/REVISION-3.md`（決定42〜52、ダンジョンと清掃）、`spec/REVISION-4.md`（決定53〜58、一座の格と報酬の配り方。○ ✕ 待ち） |
 
 ## 作業のしかた（この環境に特有のこと）
 

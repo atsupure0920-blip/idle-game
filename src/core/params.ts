@@ -89,6 +89,11 @@ export interface Params {
     chapters: number;
     stagesPerChapter: number;
   };
+  dungeon: {
+    /** 清掃できる回数（種類ごと、1日あたり）。挑戦は何回でもできる。 */
+    sweepsPerDay: number;
+    kinds: DungeonDef[];
+  };
   recruit: {
     /** レア度ごとの、★の数・能力の倍率・レベルの上限。 */
     rarities: Record<string, RarityDef>;
@@ -97,6 +102,34 @@ export interface Params {
     /** 最初の高級10連で、かならず出る団員（★3 の団員と、回復役）。 */
     firstPremiumTen: string[];
   };
+}
+
+/** ダンジョンの報酬（固定の量）。 */
+export interface DungeonReward {
+  gold?: number;
+  /** 持っている相棒それぞれに入る素材。 */
+  mats?: number;
+  /** 装備の数。 */
+  equips?: number;
+  /** 装備の ★ の出やすさを、何章の初クリアと同じにするか。 */
+  equipChapter?: number;
+}
+
+export interface DungeonTier {
+  /** 敵の強さ（本編の何面目と同じか）。 */
+  stage: number;
+  /** 初めて突破したときの報酬。 */
+  first: DungeonReward;
+  /** 清掃の報酬（初回より少ない）。 */
+  sweep: DungeonReward;
+}
+
+export interface DungeonDef {
+  id: string;
+  name: string;
+  /** この面を突破すると開く。 */
+  unlockStage: number;
+  tiers: DungeonTier[];
 }
 
 export interface RarityDef {
@@ -233,10 +266,11 @@ export type MissionKind =
   | "companionEquipped" // 相棒を編成に入れている（1 か 0）
   | "companionLevelUps" // 相棒のレベルを上げた回数
   | "equipped" // 編成の団員が付けている装備の数
-  | "enhances"; // 装備を強化した回数
+  | "enhances" // 装備を強化した回数
+  | "dungeonTier"; // どれかのダンジョンで突破した、いちばん上の段階
 
 /** 日課の種類（その日のうちの回数）。 */
-export type DailyKind = "challenges" | "levelUps" | "recruits" | "idleClaims" | "companionLevelUps" | "enhances" | "dailyClaims";
+export type DailyKind = "challenges" | "levelUps" | "recruits" | "idleClaims" | "companionLevelUps" | "enhances" | "dailyClaims" | "sweeps";
 
 export interface MissionDef {
   id: string;
@@ -298,6 +332,15 @@ export function buildContent(data: ContentData): Content {
   if (members.filter((m) => m.starter).length === 0) throw new Error("最初から持っている団員がいません");
   for (const m of members) {
     if (!params.recruit.rarities[m.rarity]) throw new Error(`団員 ${m.id} のレア度が定義されていません: ${m.rarity}`);
+  }
+  const dungeonIds = new Set<string>();
+  for (const d of params.dungeon.kinds) {
+    if (dungeonIds.has(d.id)) throw new Error(`ダンジョンのIDが重複しています: ${d.id}`);
+    dungeonIds.add(d.id);
+    if (d.tiers.length === 0) throw new Error(`ダンジョン ${d.id} に段階がありません`);
+    for (const t of d.tiers) {
+      if (!Number.isInteger(t.stage) || t.stage < 1) throw new Error(`ダンジョン ${d.id} の段階の強さが正しくありません`);
+    }
   }
   for (const id of params.recruit.firstPremiumTen) {
     if (!byId[id]) throw new Error(`最初の高級10連で出る団員がいません: ${id}`);
