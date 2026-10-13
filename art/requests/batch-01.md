@@ -12,6 +12,9 @@
 4. できた絵は、見出しにあるファイル名で、PCの `idle game/art/inbox/` に置く。
 5. 何枚かたまったら「art-in」と送る。
 
+同じ違和感が2回続いたら、その会話で直し続けず、**新しい会話を開いて依頼文を貼り直す**（同じ会話の中だと、前の絵の形に引っぱられやすい）。
+2026-10-14: 大道具係で「盾を持つ両手が右端に寄る」が3回続いたので、盾を片腕に付け、もう片方の手に木槌を持たせる形に変えた。
+
 ## 直し方の言い方（そのまま貼れる）
 
 - 頭身がずれたとき: `Make the proportions match the spec exactly: total height = 2.5 heads, the head is 40% of the full height, short arms and legs.`
@@ -20,6 +23,8 @@
 - 顔が違うとき: `Keep the face simple: large round eyes in the lower half of the head with two small white highlights, small pink blush ovals, tiny mouth, no nose line.`
 - 背景が透明でないとき: `Make the background fully transparent (PNG with alpha). No floor, no shadow, no backdrop.`
 - 全身が切れているとき: `Show the whole body from the top of the head to the soles of the feet, with empty margin around it.`
+- 両手が同じ側に寄ったとき（大道具係の盾など）: `Fix the hands: the board is strapped to the forearm on the LEFT side of the image only, and that hand is hidden behind the board. The other hand, on the RIGHT side of the image, raises a wooden mallet at shoulder height. The two hands must be on opposite sides of the body. Never put both hands on the board or on the same side.`
+- 持ち物が大きすぎるとき: `Make the prop smaller: no taller than his torso and no wider than his shoulders. His face and the center of his chest must stay fully visible.`
 - お手本とずれたとき: `Match the attached reference image exactly in line color, line thickness, head-to-body ratio, eye style and shading. Only change the character design.`
 
 ---
@@ -41,8 +46,10 @@ STYLE (follow exactly):
 CHARACTER: "Stagehand" — a sturdy, broad-shouldered young man in his early 20s, kind and dependable.
 - Hair: short messy light-brown hair, a sky-blue bandana tied around the head.
 - Clothes: cream long-sleeve work shirt with rolled sleeves, beige canvas work apron with a front pocket (a pencil sticking out), soft navy work pants, brown boots, light-brown leather work gloves.
-- Prop: with both hands he holds in front of him, like a shield, a flat wooden stage-scenery board painted with a simple green tree and blue sky (the board is about as tall as his torso). A small wooden mallet hangs from his belt.
-- Expression and pose: confident warm grin, standing firmly with feet apart, body turned slightly (three-quarter view) to the viewer's right, face toward the viewer.
+- Prop 1 (shield): a small flat wooden stage-scenery board, painted with a simple green tree and blue sky, worn like a real round-cornered shield. It is strapped to ONE forearm only — the arm on the LEFT side of the image. That hand grips a handle on the back of the board, so this hand is hidden behind the board. The board is held upright, covering only the left side of his body (from the image's point of view); his face and the center of his chest stay visible. The board is about as tall as his torso and no wider than his shoulders.
+- Prop 2 (mallet): his OTHER hand — the one on the RIGHT side of the image — is raised to about shoulder height and holds a small wooden mallet, clearly away from the board.
+- Hands: the two hands are far apart, one on each side of the body. Only one hand touches the board. Do NOT put both hands on the board, and do NOT put both hands on the same side of the image.
+- Expression and pose: confident warm grin, standing firmly with feet apart, body facing the viewer (front view), face toward the viewer.
 
 FORMAT:
 - Square 1024x1024 image, fully transparent background (PNG with alpha).
