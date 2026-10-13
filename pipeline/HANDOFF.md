@@ -19,6 +19,7 @@
 | 合否の数字 | `spec/ACCEPTANCE.yaml` |
 | ユーザーの感想と要望 | `feedback/F-*.md`（1件1票）、`feedback/G1.md`（採点表） |
 | 保留にした要望 | `pipeline/BACKLOG.md` |
+| 絵の決まり、依頼文、名前の一覧（S4） | `art/ART_GUIDE.md`、`art/requests/`。受け取りの手順は `pipeline/commands/art-in.md` |
 | 承認の記録 | `pipeline/APPROVALS.md` |
 | 最初の30分の計算結果 | 第3版は `pipeline/reports/S3-v3-first30.md`（第2版は `S3-v2-first30.md`、第1版は `S2-first30.md`） |
 | いまの作り（第3版: 稽古、リセット、レア度、勧誘、装備、6人編成、数値、宿題） | `pipeline/DECISIONS.md` の D-015〜D-018（第2版は D-013、D-014）。数値の宿題は `feedback/F-018.md` |

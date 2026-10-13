@@ -15,7 +15,14 @@ interface Lineup {
   /** 編成に入れている相棒の名前（いなければ null）。 */
   companionName: string | null;
   name: (key: string) => string;
+  /** 戦闘に出る者の絵の URL（なければ null。文字の仮の見た目のまま）。 */
+  art?: (key: string) => string | null;
+  /** 背景の絵の URL（なければ null）。 */
+  background?: string | null;
 }
+
+/** 戦闘の音を鳴らすための知らせ（新しく起きた出来事だけ）。 */
+export type BattleFx = "hit" | "skill" | "heal";
 
 export interface BattleShow extends Lineup {
   /** 戦闘が始まる時刻と、終わる時刻（ゲームの中の時刻）。 */
@@ -61,7 +68,7 @@ function div(className: string, text?: string): HTMLDivElement {
   return el;
 }
 
-export function createBattleView(root: HTMLElement): BattleView {
+export function createBattleView(root: HTMLElement, onFx: (fx: BattleFx) => void = () => undefined): BattleView {
   root.textContent = "";
   const rows: Record<string, HTMLElement> = {};
   const order: [number, number][] = [
@@ -104,6 +111,16 @@ export function createBattleView(root: HTMLElement): BattleView {
   const makeUnit = (spec: FighterSpec, side: number, index: number, b: Lineup): Unit => {
     const el = div(`unit${side === 1 && b.boss ? " boss" : ""}${spec.trait ? ` trait-${spec.trait}` : ""}`);
     el.dataset["testid"] = `unit-${side}-${index}`;
+    const art = b.art ? b.art(spec.key) : null;
+    if (art !== null) {
+      el.classList.add("has-art");
+      const img = document.createElement("img");
+      img.className = "unit-art";
+      img.src = art;
+      img.alt = "";
+      img.draggable = false;
+      el.appendChild(img);
+    }
     const name = div("unit-name", b.name(spec.key));
     const bar = div("hpbar");
     const fill = div("hpfill");
@@ -173,18 +190,23 @@ export function createBattleView(root: HTMLElement): BattleView {
       if (skill !== null && key !== lastSkillKey) {
         lastSkillKey = key;
         float(host, skill, "float-skill");
+        onFx("skill");
       }
     }
     if (!target) return;
     const healing = e.kind === "heal" || e.kind === "healall" || e.kind === "selfheal";
     if (healing) {
       target.hp = Math.min(target.maxHp, target.hp + e.amount);
-      if (fresh && e.amount > 0) float(target.el, `+${e.amount}`, "float-heal");
+      if (fresh && e.amount > 0) {
+        float(target.el, `+${e.amount}`, "float-heal");
+        onFx("heal");
+      }
     } else {
       target.hp = Math.max(0, target.hp - e.amount);
       if (fresh) {
         float(target.el, `-${e.amount}`, e.kind === "attack" ? "float-dmg" : "float-dmg float-big");
         pulse(target.el, "hit", 180);
+        onFx("hit");
       }
     }
     paint(target);
@@ -194,6 +216,8 @@ export function createBattleView(root: HTMLElement): BattleView {
     for (const el of Object.values(rows)) el.textContent = "";
     units = [b.allies.map((s, i) => makeUnit(s, 0, i, b)), b.enemies.map((s, i) => makeUnit(s, 1, i, b))];
     for (const side of units) for (const u of side) paint(u);
+    root.style.backgroundImage = b.background ? `url("${b.background}")` : "";
+    root.classList.toggle("has-bg", Boolean(b.background));
     chip.textContent = b.stageText === "" ? "" : `${b.stageText}${b.boss ? " ボス" : ""}`;
     chip.hidden = b.stageText === "";
     companionChip.hidden = b.companionName === null;

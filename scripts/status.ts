@@ -2,7 +2,7 @@
 //
 //   node scripts/status.ts
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
 import { SRC_ROOT, STAGE_NAMES, buildTags, currentStage, dirtyFiles, doneStages, git, gitOk, runNode } from "./lib/env.ts";
@@ -168,6 +168,19 @@ if (stage === "S0") {
     next.push("記録がそろったら、G1（続行の採点）を行う");
   } else {
     next.push(`G1 の判定は「${verdict}」。出口の検査（exit）が通れば「next」で S4 へ`);
+  }
+} else if (stage === "S4") {
+  const imgDir = path.join(SRC_ROOT, "src/assets/img");
+  const count = existsSync(imgDir) ? readdirSync(imgDir).filter((f) => f.endsWith(".webp")).length : 0;
+  if (count === 0) {
+    waiting.push("art/requests/batch-01.md の依頼文で、ChatGPT に絵を作ってもらい、PCの art/inbox/ に置く（見た目の試し、10枚）");
+    waiting.push("何枚かたまったら、チャットで「art-in」と送る");
+    next.push("絵が届いたら、art-in の手順でゲームに入れ、play で公開する");
+  } else {
+    lines.push(`絵: ${count}枚がゲームに入っています`);
+    waiting.push("絵の入った画面を iPhone で見て、この絵柄で進めてよいか（G2 画風の固定）を決める");
+    waiting.push("G1 の残り（やめたくなった時刻、最後の10分に次が見たいか、初見の3人）を、絵の入ったビルドで");
+    next.push("残りの絵の依頼文（2回目）を作る。出口の検査（exit）が通り、G2 が決まれば「next」で S5 へ");
   }
 } else if (stage !== null) {
   next.push(`${stage} の表示は、この段階に入るときに追加します`);

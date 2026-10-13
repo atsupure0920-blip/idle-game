@@ -6,13 +6,15 @@
 //   - 戦闘の表示（battleview.ts）は、計算済みの戦闘を、毎フレーム時間どおりに再生する。
 //   - 押せる要素は data-action を持ち、ここでまとめて受ける。
 
-import { buildContent, isBossStage, levelCap, stageLabel } from "../core/params.ts";
+import { buildContent, chapterOf, isBossStage, levelCap, stageLabel } from "../core/params.ts";
 import type { BannerId, ContentData, EquipSlot } from "../core/params.ts";
 import { FRONT_SIZE, allySpecs, battleStats, dailyList, enemySpecs, idlePending, maxAffordableLevel, missionList, nextStage } from "../core/game.ts";
 import type { GameEvent, RewardAmounts } from "../core/game.ts";
 import { createSession, playLogLines } from "./session.ts";
 import { backupSave, isStandalone, readStore, requestPersistence, writeStore } from "./storage.ts";
 import { createBattleView } from "./battleview.ts";
+import { artUrl, fighterArtId, setArt } from "./art.ts";
+import { initSound, play, setSoundEnabled, soundEnabled, unlockSound } from "./sound.ts";
 import { equipName, fighterName, formatNumber, rewardText } from "./texts.ts";
 import {
   TABS,
@@ -70,6 +72,8 @@ function localDayKey(ms: number): number {
 
 function start(): void {
   const content = buildContent(__CONTENT__ as ContentData);
+  setArt(__ART__, __BUILD_ID__);
+  initSound();
   const session = createSession(
     { now: () => Date.now(), seed: randomSeed, dayKey: localDayKey, read: readStore, write: writeStore, backup: (text, nowMs) => void backupSave(text, nowMs), debug: __DEBUG__ },
     content,
@@ -90,6 +94,7 @@ function start(): void {
     speed: 1,
     importMessage: "",
     exportText: "",
+    sound: soundEnabled(),
   };
 
   // --- 画面の部品 ---
@@ -105,7 +110,13 @@ function start(): void {
   const hudTickets = byTestId("hud-tickets");
   const hudPremium = byTestId("hud-premium");
   const otherButton = byTestId("tab-other");
-  const battle = createBattleView(need("field"));
+  const battle = createBattleView(need("field"), (fx) => play(fx));
+  const fighterArt = (key: string): string | null => {
+    const id = fighterArtId(key);
+    return id === null ? null : artUrl(id);
+  };
+  /** 章の背景の絵（なければ null）。 */
+  const backgroundFor = (stage: number | null): string | null => (stage === null ? null : artUrl(`bg_ch${chapterOf(Math.max(1, stage), p)}`));
 
   if (__DEBUG__) {
     installDebug({
@@ -196,11 +207,13 @@ function start(): void {
     for (const e of events) {
       if (e.type === "win") {
         ui.result = { type: "win", stage: e.stage, reward: e.reward, equipDefId: e.equipDefId, companionId: null };
+        play("win");
         feed(`${stageLabel(e.stage, p)} を突破（${rewardText(e.reward)}）`);
         // 旅の画面では、結果の欄に出るので、ほかの画面を見ているときだけ知らせる
         if (ui.tab !== "journey") toast(`${stageLabel(e.stage, p)} を突破！ おひねり +${formatNumber(e.reward.gold)}`, "good");
       } else if (e.type === "defeat") {
         ui.result = { type: "defeat", stage: e.stage, timedOut: e.timedOut };
+        play("lose");
         feed(`${stageLabel(e.stage, p)} で負け${e.timedOut ? "（時間切れ）" : ""}`);
         toast(`${stageLabel(e.stage, p)} で負け… 稽古が足りない！`, "bad");
       } else if (e.type === "companion") {
@@ -210,11 +223,13 @@ function start(): void {
         openModal(() => companionJoinHtml(session.game(), content, id));
       } else if (e.type === "dungeonWin") {
         ui.result = { type: "dungeonWin", kind: e.kind, tier: e.tier, got: e.got };
+        play("win");
         const name = p.dungeon.kinds.find((d) => d.id === e.kind)?.name ?? "";
         feed(`${name} 段階${e.tier} を突破`);
         if (ui.tab !== "journey") toast(`${name} 段階${e.tier} を突破！`, "good");
       } else if (e.type === "dungeonDefeat") {
         ui.result = { type: "dungeonDefeat", kind: e.kind, tier: e.tier, timedOut: e.timedOut };
+        play("lose");
         const name = p.dungeon.kinds.find((d) => d.id === e.kind)?.name ?? "";
         feed(`${name} 段階${e.tier} で負け`);
         if (ui.tab !== "journey") toast(`${name} 段階${e.tier} で負け…`, "bad");
@@ -250,6 +265,8 @@ function start(): void {
         enemies: rep.enemies,
         companionName: rep.companion === null ? null : (content.companionById[rep.companion.key]?.name ?? null),
         name,
+        art: fighterArt,
+        background: backgroundFor(rep.stage),
         gaugeMax: p.battle.gaugeMax,
         gaugePerAttack: p.battle.gaugePerAttack,
         timeLimitSec: p.battle.timeLimitSec,
@@ -271,6 +288,8 @@ function start(): void {
       enemies: stage === null ? [] : enemySpecs(stage, content),
       companionName,
       name,
+      art: fighterArt,
+      background: backgroundFor(stage),
       banner: g.battle !== null ? "戦闘中…" : undefined,
     });
   };
@@ -382,7 +401,10 @@ function start(): void {
   };
 
   const fail = (reason: string | undefined): void => {
-    if (reason) toast(reason, "bad");
+    if (reason) {
+      toast(reason, "bad");
+      play("error");
+    }
   };
 
   /** 達成したミッションと日課を、まとめて受け取る。受け取った件数と、合計を返す。 */
@@ -404,9 +426,13 @@ function start(): void {
     return { count, total };
   };
 
+  /** 押したときに、自分の音を鳴らす操作（ほかは「押した」音）。 */
+  const OWN_SOUND = new Set(["recruit", "collect", "claim-mission", "claim-daily", "claim-all", "dungeon-sweep", "levelup", "level-confirm", "promote", "enhance"]);
+
   const onAction = (el: HTMLElement): void => {
     const action = el.dataset["action"] ?? "";
     const id = el.dataset["id"] ?? "";
+    if (!OWN_SOUND.has(action)) play("tap");
     switch (action) {
       case "tab":
         setTab((el.dataset["tab"] ?? "journey") as Tab);
@@ -437,6 +463,7 @@ function start(): void {
           if (r.got.mats > 0) parts.push(`相棒の素材 +${r.got.mats}`);
           if (r.got.equips.length > 0) parts.push(`装備 +${r.got.equips.length}`);
           toast(`清掃: ${parts.join("、")}`, "good");
+          play("coin");
         } else fail(r.reason);
         break;
       }
@@ -448,6 +475,7 @@ function start(): void {
             .join("、");
           const equips = (r.equips ?? []).length;
           toast(`箱から おひねり +${formatNumber(r.gold ?? 0)}${mats ? `、${mats}` : ""}${equips > 0 ? `、装備 +${equips}` : ""}`, "good");
+          play("coin");
         } else fail(r.reason);
         break;
       }
@@ -459,6 +487,7 @@ function start(): void {
         const ten = el.dataset["n"] === "10";
         const target = ten ? Math.min(own.level + 10, levelCap(def, own.plus, p)) : own.level + 1;
         const r = session.levelUpTo(id, target, ten ? "+10" : "+1");
+        if (r.ok) play("levelup");
         if (r.ok && ten) toast(`${def.name} のレベル +${r.levels ?? 0}`, "good");
         else if (!r.ok) fail(r.reason);
         break;
@@ -510,6 +539,7 @@ function start(): void {
         const r = session.levelUpTo(d.id, target, "指定");
         if (r.ok) {
           toast(`${content.byId[d.id]?.name ?? ""} を Lv ${target} に上げました（+${r.levels ?? 0}）`, "good");
+          play("levelup");
           closeModal();
         } else fail(r.reason);
         break;
@@ -526,7 +556,10 @@ function start(): void {
       }
       case "promote": {
         const r = session.promote(id);
-        if (r.ok) toast(`${content.byId[id]?.name ?? ""} が昇格！（+${session.game().members[id]?.plus ?? 0}）`, "good");
+        if (r.ok) {
+          toast(`${content.byId[id]?.name ?? ""} が昇格！（+${session.game().members[id]?.plus ?? 0}）`, "good");
+          play("gachaRare");
+        }
         else fail(r.reason);
         break;
       }
@@ -557,6 +590,7 @@ function start(): void {
           const item = session.game().equips.find((e) => e.uid === uid);
           const def = item ? content.equipById[item.defId] : undefined;
           if (item && def) toast(`${equipName(def, item.level)} に強化しました`, "good");
+          play("levelup");
         } else fail(r.reason);
         break;
       }
@@ -595,6 +629,8 @@ function start(): void {
         const r = session.recruit(banner, Number(el.dataset["count"] ?? "1"));
         if (r.ok && r.results) {
           const outcomes = r.results;
+          const rare = outcomes.some((o) => (p.recruit.rarities[content.byId[o.id]?.rarity ?? ""]?.stars ?? 0) >= 3);
+          play(rare ? "gachaRare" : "gacha");
           openModal(() => recruitResultHtml(session.game(), content, outcomes));
         } else fail(r.reason);
         break;
@@ -661,13 +697,19 @@ function start(): void {
       case "claim-mission":
       case "claim-daily": {
         const r = action === "claim-mission" ? session.claimMission(id) : session.claimDaily(id);
-        if (r.ok && r.reward) toast(`報酬: ${rewardText(r.reward)}`, "good");
+        if (r.ok && r.reward) {
+          toast(`報酬: ${rewardText(r.reward)}`, "good");
+          play("coin");
+        }
         else fail(r.reason);
         break;
       }
       case "claim-all": {
         const r = claimAll();
-        if (r.count > 0) toast(`${r.count}件の報酬: ${rewardText(r.total)}`, "good");
+        if (r.count > 0) {
+          toast(`${r.count}件の報酬: ${rewardText(r.total)}`, "good");
+          play("coin");
+        }
         else fail("受け取れる報酬がありません");
         break;
       }
@@ -698,6 +740,11 @@ function start(): void {
         logEvent("import", { ok: r.ok, reason: r.reason ?? "" });
         break;
       }
+      case "sound-toggle":
+        setSoundEnabled(!soundEnabled());
+        ui.sound = soundEnabled();
+        if (ui.sound) play("tap");
+        break;
       case "dbg-speed":
         session.debugSetSpeed(Number(el.dataset["v"]));
         break;
@@ -737,6 +784,8 @@ function start(): void {
     render();
   };
 
+  // iPhone では、画面に触れてからでないと音を鳴らせない。触れるたびに準備を確かめる（2回目からは何もしない）
+  for (const type of ["pointerdown", "touchend", "click"]) document.addEventListener(type, () => unlockSound(), { passive: true });
   document.addEventListener("click", (ev) => {
     // ポップアップの外（暗いところ）を押したら閉じる。出た直後の押し間違いは除く
     if (ev.target === modalRoot && !modalRoot.hidden) {

@@ -5,7 +5,8 @@
 //   node scripts/build.ts --out 場所  … 出力先を変える（既定は dist）
 
 import { build } from "esbuild";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { currentBuildId } from "./lib/env.ts";
 import { readContentData } from "./lib/content.ts";
@@ -21,6 +22,19 @@ const buildId = currentBuildId();
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
 
+// 絵（src/assets/img/*.webp）。置いてある絵の id を画面のコードへ埋め込み、ファイルは dist/img/ へ写す。
+const artDir = "src/assets/img";
+const artIds = existsSync(artDir)
+  ? (await readdir(artDir))
+      .filter((f) => f.endsWith(".webp"))
+      .map((f) => f.slice(0, -".webp".length))
+      .sort()
+  : [];
+if (artIds.length > 0) {
+  await mkdir(path.join(outDir, "img"), { recursive: true });
+  for (const id of artIds) await copyFile(path.join(artDir, `${id}.webp`), path.join(outDir, "img", `${id}.webp`));
+}
+
 await build({
   entryPoints: ["src/ui/main.ts"],
   bundle: true,
@@ -33,6 +47,7 @@ await build({
     __BUILD_ID__: JSON.stringify(buildId),
     __DEBUG__: release ? "false" : "true",
     __CONTENT__: JSON.stringify(contentData),
+    __ART__: JSON.stringify(artIds),
   },
   logLevel: "warning",
 });
@@ -47,4 +62,4 @@ await writeFile(
   JSON.stringify({ buildId, release, builtAt: new Date().toISOString() }, null, 2) + "\n",
 );
 
-console.log(`ビルドしました: ${buildId}${release ? "（公開用）" : "（確認用）"} → ${outDir}/`);
+console.log(`ビルドしました: ${buildId}${release ? "（公開用）" : "（確認用）"}、絵 ${artIds.length}枚 → ${outDir}/`);

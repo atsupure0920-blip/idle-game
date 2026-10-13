@@ -5,3 +5,4 @@ art/inbox/
 .secrets/
 *.log
 feedback/logs/
+art/done/

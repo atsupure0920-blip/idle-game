@@ -65,7 +65,7 @@ git の操作（記録、番号付け）は、このフォルダに対して直�
 | next | `pipeline/commands/next.md` |
 | play | `pipeline/commands/play.md` |
 | rollback 番号 | `pipeline/commands/rollback.md` |
-| art-in 番号 | S4 に入るときに作る |
+| art-in | `pipeline/commands/art-in.md` |
 
 保護ファイルの承認は `pipeline/commands/approve.md`、段階の出口での独立した検証は `pipeline/verifier.md`。
 

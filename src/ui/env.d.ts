@@ -3,3 +3,5 @@ declare const __BUILD_ID__: string;
 declare const __DEBUG__: boolean;
 /** 数値と定義（params/*.json の中身）。ビルド時に埋め込む。 */
 declare const __CONTENT__: unknown;
+/** 置いてある絵の id の一覧（src/assets/img/*.webp）。ビルド時に埋め込む。 */
+declare const __ART__: string[];

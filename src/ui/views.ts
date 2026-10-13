@@ -39,6 +39,7 @@ import {
 import type { DungeonGot, GameData, GoalView, OwnedEquip, RecruitOutcome, RewardAmounts } from "../core/game.ts";
 import { EQUIP_SLOTS, chapterOf, companionSkillPower, equipBonus, equipLevelCap, idleGoldPerMin, isBossStage, levelCap, maxPlus, stageLabel } from "../core/params.ts";
 import type { BannerId, CompanionDef, Content, DailyDef, DungeonReward, EquipSlot, MemberDef, MissionDef } from "../core/params.ts";
+import { artUrl } from "./art.ts";
 import {
   ROLE_LABEL,
   SLOT_LABEL,
@@ -125,6 +126,8 @@ export interface UiState {
   importMessage: string;
   /** 書き出したセーブ（その他の画面に出す。出していなければ空）。 */
   exportText: string;
+  /** 効果音を鳴らすか（端末ごとの設定。なければ鳴らす）。 */
+  sound?: boolean;
 }
 
 /** 箱に、これだけの時間ぶん貯まったら、旅のタブに印を付ける。 */
@@ -600,7 +603,7 @@ function heroCardHtml(g: GameData, ctx: Content, id: string, hero: HeroState): s
   const top =
     `<div class="hero-top">` +
     `<div class="portrait rar-frame-${stars}${r?.elite ? " is-elite" : ""}" data-testid="hero-portrait">` +
-    `<span class="portrait-char">${escapeHtml(def.name.slice(0, 1))}</span>` +
+    (artUrl(id) !== null ? `<img class="portrait-img" src="${artUrl(id)}" alt="" draggable="false">` : `<span class="portrait-char">${escapeHtml(def.name.slice(0, 1))}</span>`) +
     `<span class="portrait-stars">${starsText(stars)}${r?.elite ? "<i>エリート</i>" : ""}</span>` +
     `</div>` +
     `<div class="hero-info">` +
@@ -703,6 +706,7 @@ export function membersHtml(g: GameData, ctx: Content, hero: HeroState): string 
     return (
       `<li data-testid="member-row-${id}">` +
       `<button type="button" class="${cls}" data-action="select" data-id="${id}" data-testid="detail-${id}">` +
+      (artUrl(id) !== null ? `<img class="tile-img" src="${artUrl(id)}" alt="" draggable="false" loading="lazy">` : "") +
       `<span class="tile-lv">Lv <b data-testid="member-level-${id}">${m.level}</b></span>` +
       `<span class="tile-name">${escapeHtml(m.def.name)}${m.plus > 0 ? `<i>+${m.plus}</i>` : ""}</span>` +
       `<span class="tile-stars">${starsText(m.stars)}</span>` +
@@ -1065,6 +1069,7 @@ export function otherHtml(g: GameData, ctx: Content, ui: UiState, extraHtml: str
     `<div><dt>保存</dt><dd data-testid="save-status">${escapeHtml(ui.saveStatus)}</dd></div>` +
     `<div><dt>開き方</dt><dd data-testid="launch-mode">${ui.standalone ? "ホーム画面から" : "ブラウザから"}</dd></div>` +
     `</dl>` +
+    `<div class="row-between"><span>効果音</span><button type="button" class="btn ${ui.sound === false ? "" : "btn-primary"}" data-action="sound-toggle" data-testid="sound-toggle">${ui.sound === false ? "切（押すと入）" : "入（押すと切）"}</button></div>` +
     `<div class="card">` +
     `<h3>セーブの書き出しと読み込み</h3>` +
     `<p class="mini">機種を変えるときや、念のための控えに使います。書き出した文字をどこかに貼って取っておき、読み込むときはここに貼り付けます。</p>` +
@@ -1090,7 +1095,7 @@ export function recruitResultHtml(g: GameData, ctx: Content, outcomes: RecruitOu
     const r = p.recruit.rarities[def.rarity];
     return (
       `<li class="${o.duplicate ? "" : "is-new"} rar-row-${r?.stars ?? 0}${r?.elite ? " rar-row-elite" : ""}">` +
-      `<span>${escapeHtml(def.name)} <small class="rar rar-${r?.stars ?? 0}${r?.elite ? " rar-elite" : ""}">${rarityText(def, p)}</small> <small>${ROLE_LABEL[def.role]}</small></span>` +
+      `<span>${artUrl(def.id) !== null ? `<img class="row-img" src="${artUrl(def.id)}" alt="" draggable="false">` : ""}${escapeHtml(def.name)} <small class="rar rar-${r?.stars ?? 0}${r?.elite ? " rar-elite" : ""}">${rarityText(def, p)}</small> <small>${ROLE_LABEL[def.role]}</small></span>` +
       `<span>${o.duplicate ? "かけら +1" : "新しい団員！"}</span></li>`
     );
   });
