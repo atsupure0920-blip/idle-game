@@ -316,7 +316,17 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await shot(page, "04-missions");
     await page.locator(tid("claim-clear-1")).click();
     await page.waitForFunction((sel) => Number(document.querySelector(sel)?.textContent ?? "0") === 10, tid("hud-premium"), { timeout: 5_000 });
+    expect((await page.locator(`${tid("tab-recruit")} .badge:not([hidden])`).count()) === 1, "10連を回せるのに、勧誘に赤い印がない");
     await tab(page, "recruit");
+    // 注意書きは「？」の中。画面には並べない
+    expect(!(await page.locator(tid("panel")).innerText()).includes("10連の確定はありません"), "勧誘の画面に、注意書きが並んでいる");
+    await page.locator(tid("help-recruit")).click();
+    await page.waitForSelector(tid("help-list"));
+    expect((await text(page, "help-list")).includes("10連の確定はありません"), "「？」に、勧誘の注意書きが出ていない");
+    await checkLayout(page, "勧誘の説明");
+    await page.waitForTimeout(450);
+    await page.mouse.click(6, 6);
+    await page.waitForSelector(tid("modal"), { state: "detached" });
     expect((await page.locator(tid("first-ten-note")).count()) === 1, "最初の10連の約束が出ていない");
     expect(await page.locator(tid("recruit-normal-1")).isDisabled(), "通常チケットがないのに、通常勧誘を回せる");
     expect(await page.locator(tid("recruit-normal-10")).isDisabled(), "通常チケットがないのに、通常勧誘の10連を回せる");
@@ -343,6 +353,7 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     await checkLayout(page, "勧誘の結果");
     await shot(page, "06-recruit-result");
     expect((await text(page, "hud-premium")) === "0", "高級チケットが減っていない");
+    expect((await page.locator(`${tid("tab-recruit")} .badge:not([hidden])`).count()) === 0, "10連を回せないのに、勧誘に赤い印がある");
   }, true);
 
   await step("「編成の空きに入れる」で、6人そろう", async () => {
@@ -384,6 +395,26 @@ async function mainFlow(browser: Browser, url: string): Promise<void> {
     expect(!body.includes("まとめて") && (await page.locator(tid("train-party")).count()) === 0, "まとめて稽古するボタンが残っている");
     expect((await page.locator(tid("auto-equip-party")).count()) === 0, "編成の全員のおまかせ装備が残っている");
     expect((await page.locator(`${tid("hero-card")}`).count()) === 1, "選んだ団員の札がない");
+    // 絞り込みと並び替えは、1つのボタンから
+    expect((await page.locator(tid("filter-3")).count()) === 0, "絞り込みのボタンが、一覧の上に並んでいる");
+    await page.locator(tid("list-options")).click();
+    await clickIn(page, "filter-3");
+    await page.locator(tid("sort-level")).click();
+    await page.waitForTimeout(450);
+    await page.mouse.click(6, 6);
+    await page.waitForSelector(tid("modal"), { state: "detached" });
+    expect((await text(page, "list-state")) === "★3・レベル順", `表示の状態が ${await text(page, "list-state")}`);
+    const tiles = await page.locator('[data-scroll-key="hero-list"] .tile').count();
+    const r3 = await page.locator('[data-scroll-key="hero-list"] .tile.t-r3').count();
+    expect(tiles > 0 && tiles === r3, `★3 で絞り込んでいない（${r3}/${tiles}）`);
+    await page.locator(tid("list-options")).click();
+    await clickIn(page, "filter-all");
+    await page.locator(tid("sort-rarity")).click();
+    await closeModal(page);
+    await page.locator(tid("help-members")).click();
+    await page.waitForSelector(tid("help-list"));
+    expect((await text(page, "help-list")).includes("リセットすると"), "「？」に、団員の説明が出ていない");
+    await closeModal(page);
     await checkLayout(page, "団員（10連のあと）");
     await page.locator(tid("detail-h_star")).click();
     await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("花形役者"), tid("detail-title"));

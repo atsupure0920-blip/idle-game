@@ -41,6 +41,8 @@ import {
   hintText,
   journeyInfoHtml,
   journeyLive,
+  helpHtml,
+  listOptionsHtml,
   memberModalHtml,
   membersHtml,
   missionsHtml,
@@ -210,6 +212,8 @@ function renderAll(s: Session, ctx: Content, result: LastResult | null = null): 
     journeyInfoHtml(g, ctx, ui, now),
     membersHtml(g, ctx, HERO),
     membersHtml(g, ctx, { ...HERO, sort: "level" }),
+    listOptionsHtml(g, ctx, HERO),
+    ...(["members", "party", "companions", "recruit", "missions"] as const).map((topic) => helpHtml(g, ctx, topic)),
     ...(["1", "2", "3", "elite"] as const).map((filter) => membersHtml(g, ctx, { ...HERO, filter })),
     partyHtml(g, ctx, { ...ui, selectedSlot: 0 }),
     partyHtml(g, ctx, ui),
@@ -488,6 +492,35 @@ test("通し: 起動 → 挑戦 → ミッション → 高級10連 → 編成 �
     assert.ok(lines.includes(word), `プレイの記録に「${word}」がある`);
   }
   assert.equal(s.playLog().opens, 4);
+});
+
+test("印: 勧誘の印は、10連を回せるだけチケットがあるときだけ。注意書きは画面に並べず「？」にまとめる", () => {
+  const ctx = loadContent(".");
+  const w = world();
+  const s = createSession(w.deps, ctx);
+  const g = s.game();
+  const now = s.now();
+  assert.equal(badges({ ...g, tickets: 9, premiumTickets: 9 }, ctx, now).recruit, false, "9枚ずつでは付けない");
+  assert.equal(badges({ ...g, tickets: 10, premiumTickets: 0 }, ctx, now).recruit, true, "通常が10枚");
+  assert.equal(badges({ ...g, tickets: 0, premiumTickets: 10 }, ctx, now).recruit, true, "高級が10枚");
+  assert.doesNotMatch(hintText({ ...g, tickets: 3 }, ctx, now), /勧誘/, "10枚に満たなければ、勧誘をすすめない");
+  // 注意書きは「？」の中にある。画面には出さない
+  const recruit = recruitHtml(g, ctx);
+  assert.ok(recruit.includes('data-testid="help-recruit"'));
+  assert.ok(!recruit.includes("10連の確定はありません") && !recruit.includes("チケットは、ミッションと日課で"), "勧誘の画面に注意書きを並べない");
+  assert.match(helpHtml(g, ctx, "recruit"), /10連の確定はありません/);
+  assert.match(helpHtml(g, ctx, "recruit"), /60回/);
+  assert.match(helpHtml(g, ctx, "members"), /リセットすると/);
+  assert.ok(!membersHtml(g, ctx, HERO).includes("リセットすると"), "団員の画面にリセットの説明を並べない");
+  assert.ok(!partyHtml(g, ctx, uiState()).includes("敵は前列を先に狙います"));
+  assert.match(helpHtml(g, ctx, "party"), /敵は前列を先に狙います/);
+  assert.ok(!missionsHtml(g, ctx).includes("一度きりの目標です"));
+  assert.ok(!companionsHtml(g, ctx).includes("改心して相棒になります"));
+  // 絞り込みと並び替えは、1つのボタンにまとめる
+  const members = membersHtml(g, ctx, HERO);
+  assert.ok(members.includes('data-testid="list-options"'));
+  assert.ok(!members.includes('data-testid="filter-3"'), "絞り込みのボタンは、一覧の上に並べない");
+  assert.match(membersHtml(g, ctx, { ...HERO, filter: "3", sort: "level" }), /★3・レベル順/);
 });
 
 test("日課: 端末の日付が変わると入れ替わる。同じ日のうちは、受け取りが残る", () => {
@@ -774,7 +807,18 @@ test("画面の中身: 進んだ状態でも作れ、押せる要素と値に te
     "filter-2",
     "filter-3",
     "filter-elite",
-    "sort-toggle",
+    "sort-rarity",
+    "sort-level",
+    "list-options",
+    "list-options-title",
+    "list-state",
+    "help-members",
+    "help-party",
+    "help-companions",
+    "help-recruit",
+    "help-missions",
+    "help-title",
+    "help-list",
     "members-gold",
     "slot-0",
     "slot-5",

@@ -199,7 +199,8 @@ export function badges(g: GameData, ctx: Content, nowMs: number): Record<Tab, bo
     members: canTrainParty(g, ctx) || ids.some((id) => promoteInfo(g, id, ctx).ok) || canAutoEquipParty(g, ctx),
     party: g.party.includes(null) && hasBench,
     companions: companionWaiting || companionIds.some((id) => companionLevelInfo(g, id, ctx).ok),
-    recruit: g.tickets > 0 || g.premiumTickets >= 10,
+    // 勧誘の印は、10連を回せるときだけ（1回ずつ回せるだけでは付けない）
+    recruit: g.tickets >= 10 || g.premiumTickets >= 10,
     missions: claimableCount(g, ctx) > 0,
     other: false,
   };
@@ -210,7 +211,7 @@ export function hintText(g: GameData, ctx: Content, nowMs: number): string {
   const b = badges(g, ctx, nowMs);
   if (b.missions) return "達成したミッションがあります。下の「ミッション」で、報酬を受け取れます。";
   if (g.premiumTickets >= 10) return "高級チケットが10枚あります。下の「勧誘」で、10連を回せます。";
-  if (b.recruit) return "勧誘チケットがあります。下の「勧誘」で、新しい団員を呼べます。";
+  if (b.recruit) return "通常チケットが10枚あります。下の「勧誘」で、10連を回せます。";
   if (b.party) return "編成に空きがあります。下の「編成」で、団員を入れましょう。";
   if (g.companionSlot === null && Object.keys(g.companions).length > 0) return "相棒がいます。下の「相棒」で、編成に入れましょう。";
   if (canAutoEquipParty(g, ctx)) return "新しい装備があります。下の「団員」で団員を選び、「装備」の「おまかせ装備」で付けられます。";
@@ -357,6 +358,88 @@ export function journeyInfoHtml(g: GameData, ctx: Content, ui: UiState, nowMs: n
   return parts.join("");
 }
 
+// ---------------------------------------------------------------- 説明（「？」）
+//
+// 注意書きは画面に並べず、各画面の「？」でまとめて見られるようにする（画面を圧迫しないため）。
+
+export type HelpTopic = "members" | "party" | "companions" | "recruit" | "missions";
+
+const HELP_TITLE: Record<HelpTopic, string> = {
+  members: "団員",
+  party: "編成",
+  companions: "相棒",
+  recruit: "勧誘",
+  missions: "ミッションと日課",
+};
+
+function helpButton(topic: HelpTopic): string {
+  return `<button type="button" class="icon-btn" data-action="help" data-topic="${topic}" data-testid="help-${topic}" aria-label="${HELP_TITLE[topic]}の説明">？</button>`;
+}
+
+/** 見出しの行（右に「？」と、ほかのボタン）。 */
+function titleRow(title: string, topic: HelpTopic, extra = ""): string {
+  return `<div class="title-row"><h2 class="panel-title">${title}</h2>${extra}${helpButton(topic)}</div>`;
+}
+
+function helpNotes(g: GameData, ctx: Content, topic: HelpTopic): string[] {
+  const p = ctx.params;
+  if (topic === "members") {
+    return [
+      "「+1」「+10」でレベルを上げます。「指定」は、どこまで上げるかを決められます。",
+      "リセットすると、レベル1に戻り、レベル上げに使ったおひねりが全部戻ります。昇格と装備は、そのままです。何回でも、ただでできます。",
+      "同じ団員が勧誘で重なると「かけら」になります。かけらがそろうと昇格（+1、+2…）でき、能力が上がり、レベルの上限が伸びます。",
+      "体力と攻撃の数字は、装備と、相棒の底上げを含みます。",
+      "装備は、面の初クリアと、箱（2時間に1つ）で手に入ります。強化は、付け替えても残ります。付け替えは、ただです。",
+      "「おまかせ装備」は、だれも付けていない装備の中から、場所ごとにいちばん良いものを付けます。「全部外す」で外した装備は、ほかの団員に付けられます。",
+      "一覧の赤い印は、昇格できる団員と、もっと良い装備が余っている出撃中の団員です。",
+    ];
+  }
+  if (topic === "party") {
+    return [
+      "敵は前列を先に狙います。体力の高い団員を前列に置くと、長く持ちます。",
+      "枠を押してから、下の一覧で「ここに入れる」を押すと入れ替わります。",
+      "相棒の枠に入れた1体は、戦闘中に技を使います。",
+    ];
+  }
+  if (topic === "companions") {
+    return [
+      "各章のボスを倒すと、改心して相棒になります。持っているだけで団員全員が強くなり、編成に入れた1体は、戦闘中に技を使います。",
+      `専用の素材は、箱に1時間あたり ${p.companion.matPerHour}こ 貯まるほか、初クリア報酬、ミッション、日課でも手に入ります。`,
+    ];
+  }
+  if (topic === "recruit") {
+    const out: string[] = [];
+    for (const id of ["premium", "normal"] as BannerId[]) {
+      const banner = p.recruit.banners[id];
+      const rates = recruitRarityRates(ctx, id)
+        .map((r) => `${p.recruit.rarities[r.rarity]?.label ?? r.rarity} ${percent(r.rate)}`)
+        .join("・");
+      const parts = [`${banner.label}: ${rates}。`];
+      parts.push(banner.tenGuaranteeStars > 0 ? `10連で、${starsText(banner.tenGuaranteeStars)} 以上が1体かならず出ます。` : "10連の確定はありません。");
+      if (banner.pity > 0) parts.push(`${banner.pity}回のうちに ${starsText(banner.pityStars)} が出なければ、${banner.pity}回目でかならず出ます。`);
+      if (!recruitRarityRates(ctx, id).some((r) => p.recruit.rarities[r.rarity]?.elite)) parts.push("エリートは出ません。");
+      out.push(parts.join(""));
+    }
+    out.push("チケットは、ミッションと日課でもらえます。");
+    out.push("すでにいる団員が来たときは、その団員の「かけら」になり、昇格（+1）に使えます。新しい団員は、レベル1から始まります。");
+    out.push("下の「勧誘」の赤い印は、10連を回せるだけチケットがあるときに付きます。");
+    return out;
+  }
+  return [
+    "日課は、日付が変わると入れ替わります。",
+    "ミッションは一度きりの目標です。達成したら、押して報酬を受け取ります。「まとめて受け取る」で、日課とミッションをまとめて受け取れます。",
+  ];
+}
+
+/** 「？」で出す説明（ポップアップ）。 */
+export function helpHtml(g: GameData, ctx: Content, topic: HelpTopic): string {
+  return (
+    `<h2 data-testid="help-title">${HELP_TITLE[topic]}の説明</h2>` +
+    `<ul class="help-list" data-testid="help-list">${helpNotes(g, ctx, topic).map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` +
+    `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
+  );
+}
+
 // ---------------------------------------------------------------- 団員（ヒーロー画面）
 //
 // 上に、選んだ団員の札（能力、育成、装備）。下に、団員の一覧。一覧で選ぶと、その場で上の札が替わる。
@@ -449,8 +532,7 @@ function heroCardHtml(g: GameData, ctx: Content, id: string, hero: HeroState): s
         : `<span class="shards">かけら <b data-testid="detail-shards">${own.shards}</b>/${promo.need}</span>` +
           `<button type="button" class="btn ${promo.ok ? "btn-primary" : ""}" data-action="promote" data-id="${id}" data-testid="promote-button" ${promo.ok ? "" : "disabled"}>昇格（+${own.plus + 1}）</button>`) +
       resetButton +
-      `</div>` +
-      `<p class="mini">リセット: Lv1 に戻り、レベル上げに使ったおひねりが全部戻ります。${boosted ? "体力と攻撃は、装備と相棒の底上げを含みます。" : "体力と攻撃は、装備を含みます。"}</p>`;
+      `</div>`;
   } else {
     const on = equippedOn(g, id, ctx);
     const worn = EQUIP_SLOTS.filter((slot) => on[slot] !== null).length;
@@ -513,17 +595,35 @@ export function membersHtml(g: GameData, ctx: Content, hero: HeroState): string 
       `</button></li>`
     );
   });
-  const all = owned(g, ctx);
-  const chips = FILTERS.map((f) => {
-    const n = all.filter((m) => passesFilter(m, f.v)).length;
-    return `<button type="button" class="chip ${hero.filter === f.v ? "active" : ""}" data-action="filter" data-v="${f.v}" data-testid="filter-${f.v}">${f.label} <small>${f.v === "all" ? `${n}/${ctx.members.length}` : n}</small></button>`;
-  }).join("");
+  const filterLabel = FILTERS.find((f) => f.v === hero.filter)?.label ?? "全員";
+  const state = `${filterLabel}・${hero.sort === "level" ? "レベル順" : "レア度順"}`;
   return (
     (selected === null ? "" : heroCardHtml(g, ctx, selected, hero)) +
     `<section class="hero-list" data-scroll-key="hero-list">` +
-    `<div class="chips">${chips}<button type="button" class="chip chip-sort" data-action="sort-toggle" data-testid="sort-toggle">${hero.sort === "level" ? "レベル順" : "レア度順"}</button></div>` +
+    `<div class="list-head"><b>団員 ${ownedCount(g)} / ${ctx.members.length}</b>` +
+    `<span class="list-state" data-testid="list-state">${state}</span>` +
+    `<button type="button" class="icon-btn" data-action="list-options" data-testid="list-options" aria-label="絞り込みと並び替え">⇅</button>` +
+    helpButton("members") +
+    `</div>` +
     (tiles.length > 0 ? `<ul class="hero-grid">${tiles.join("")}</ul>` : `<p class="mini">この絞り込みに合う団員は、まだいません。</p>`) +
     `</section>`
+  );
+}
+
+/** 一覧の絞り込みと並び替え（ポップアップ）。押すとすぐ一覧に反映される。 */
+export function listOptionsHtml(g: GameData, ctx: Content, hero: HeroState): string {
+  const all = owned(g, ctx);
+  const filters = FILTERS.map((f) => {
+    const n = all.filter((m) => passesFilter(m, f.v)).length;
+    return `<button type="button" class="chip ${hero.filter === f.v ? "active" : ""}" data-action="filter" data-v="${f.v}" data-testid="filter-${f.v}">${f.label} <small>${n}</small></button>`;
+  }).join("");
+  const sort = (v: HeroState["sort"], label: string): string =>
+    `<button type="button" class="chip ${hero.sort === v ? "active" : ""}" data-action="sort" data-v="${v}" data-testid="sort-${v}">${label}</button>`;
+  return (
+    `<h2 data-testid="list-options-title">団員の一覧の表示</h2>` +
+    `<h3>★で絞り込む</h3><div class="chips chips-wrap">${filters}</div>` +
+    `<h3>並び</h3><div class="chips chips-wrap">${sort("rarity", "レア度順")}${sort("level", "レベル順")}</div>` +
+    `<button type="button" class="btn btn-wide" data-action="close-modal" data-testid="modal-close">閉じる</button>`
   );
 }
 
@@ -633,8 +733,7 @@ export function partyHtml(g: GameData, ctx: Content, ui: UiState): string {
   const front = Array.from({ length: FRONT_SIZE }, (_, i) => slot(i)).join("");
   const back = Array.from({ length: FRONT_SIZE }, (_, i) => slot(FRONT_SIZE + i)).join("");
   return (
-    `<h2 class="panel-title">編成（戦力 ${formatNumber(partyPower(g, ctx))}）</h2>` +
-    `<p class="panel-note">敵は前列を先に狙います。体力の高い団員を前列に置くと、長く持ちます。</p>` +
+    titleRow(`編成（戦力 ${formatNumber(partyPower(g, ctx))}）`, "party") +
     `<div class="formation">` +
     `<div class="formation-row"><span class="row-label">前列</span>${front}</div>` +
     `<div class="formation-row"><span class="row-label">後列</span>${back}</div>` +
@@ -693,11 +792,10 @@ export function companionsHtml(g: GameData, ctx: Content): string {
   if (boost.hp > 1) total.push(`体力 +${Math.round((boost.hp - 1) * 100)}%`);
   if (boost.atk > 1) total.push(`攻撃 +${Math.round((boost.atk - 1) * 100)}%`);
   return (
-    `<h2 class="panel-title">相棒（${Object.keys(g.companions).length} / ${list.length}体）</h2>` +
-    `<p class="panel-note">各章のボスを倒すと、改心して相棒になります。持っているだけで団員全員が強くなり、編成に入れた1体は、戦闘中に技を使います。</p>` +
+    titleRow(`相棒（${Object.keys(g.companions).length} / ${list.length}体）`, "companions") +
     `<div class="mini" data-testid="companion-total">いまの底上げの合計: ${total.length > 0 ? `団員全員の ${total.join("、")}` : "なし"}</div>` +
     `<ul class="comp-list">${list.map((def) => companionRow(g, ctx, def)).join("")}</ul>` +
-    `<p class="panel-note">専用の素材は、箱に1時間あたり ${p.companion.matPerHour}こ 貯まるほか、初クリア報酬、ミッション、日課でも手に入ります。</p>`
+    ""
   );
 }
 
@@ -712,12 +810,6 @@ function bannerHtml(g: GameData, ctx: Content, bannerId: BannerId): string {
   const banner = p.recruit.banners[bannerId];
   const premium = bannerId === "premium";
   const have = premium ? g.premiumTickets : g.tickets;
-  const rates = recruitRarityRates(ctx, bannerId)
-    .map((r) => `${escapeHtml(p.recruit.rarities[r.rarity]?.label ?? r.rarity)} ${percent(r.rate)}`)
-    .join("・");
-  const notes: string[] = [];
-  notes.push(banner.tenGuaranteeStars > 0 ? `10連で、${starsText(banner.tenGuaranteeStars)} 以上が1体かならず出ます。` : "10連の確定はありません。");
-  if (!recruitRarityRates(ctx, bannerId).some((r) => p.recruit.rarities[r.rarity]?.elite)) notes.push("エリートは出ません。");
   const left = pityLeft(g, bannerId, ctx);
   const pity = left !== null ? `<div class="pity">${starsText(banner.pityStars)} 確定まで あと <b data-testid="pity-left">${left}</b>回</div>` : "";
   let first = "";
@@ -738,8 +830,7 @@ function bannerHtml(g: GameData, ctx: Content, bannerId: BannerId): string {
     `<button type="button" class="btn ${have >= 10 ? "btn-primary" : ""} btn-big" data-action="recruit" data-banner="${bannerId}" data-count="10" data-testid="recruit-${bannerId}-10" ${have >= 10 ? "" : "disabled"}>10連<small>10枚</small></button>` +
     `</div>` +
     pity +
-    `<div class="mini">${rates}</div>` +
-    `<div class="mini">${notes.join(" ")}</div>` +
+
     `<button type="button" class="btn" data-action="rates" data-banner="${bannerId}" data-testid="rates-${bannerId}">出る団員と割合を見る</button>` +
     `</div>`
   );
@@ -747,10 +838,9 @@ function bannerHtml(g: GameData, ctx: Content, bannerId: BannerId): string {
 
 export function recruitHtml(g: GameData, ctx: Content): string {
   return (
-    `<h2 class="panel-title">勧誘</h2>` +
+    titleRow("勧誘", "recruit") +
     bannerHtml(g, ctx, "premium") +
-    bannerHtml(g, ctx, "normal") +
-    `<p class="panel-note">チケットは、ミッションと日課でもらえます。すでにいる団員が来たときは、その団員の「かけら」になり、昇格（+1）に使えます。新しい団員は、レベル1から始まります。</p>`
+    bannerHtml(g, ctx, "normal")
   );
 }
 
@@ -812,12 +902,13 @@ export function missionsHtml(g: GameData, ctx: Content): string {
   const readyCount = ready.length + dailies.filter((d) => d.claimable).length;
   const rest = pending.length - PENDING_SHOWN;
   return (
-    `<div class="row-between"><h2 class="panel-title">今日の日課</h2>` +
-    `<button type="button" class="btn ${readyCount > 0 ? "btn-primary" : ""}" data-action="claim-all" data-testid="claim-all" ${readyCount > 0 ? "" : "disabled"}>まとめて受け取る${readyCount > 0 ? `（${readyCount}）` : ""}</button></div>` +
-    `<p class="panel-note">日付が変わると、入れ替わります。</p>` +
+    titleRow(
+      "今日の日課",
+      "missions",
+      `<button type="button" class="btn ${readyCount > 0 ? "btn-primary" : ""}" data-action="claim-all" data-testid="claim-all" ${readyCount > 0 ? "" : "disabled"}>まとめて受け取る${readyCount > 0 ? `（${readyCount}）` : ""}</button>`,
+    ) +
     `<ul class="task-list" data-testid="daily-list">${dailies.map((d) => goalRow(d, "daily")).join("")}</ul>` +
     `<h2 class="panel-title">ミッション（${claimed} / ${missions.length}）</h2>` +
-    `<p class="panel-note">一度きりの目標です。達成したら、押して報酬を受け取ります。</p>` +
     `<ul class="task-list" data-testid="mission-list">` +
     ready.map((m) => goalRow(m, "mission")).join("") +
     pending.slice(0, PENDING_SHOWN).map((m) => goalRow(m, "mission")).join("") +

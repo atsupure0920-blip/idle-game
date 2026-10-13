@@ -19,7 +19,9 @@ import {
   badges,
   companionJoinHtml,
   companionsHtml,
+  helpHtml,
   heroSelectedId,
+  listOptionsHtml,
   journeyInfoHtml,
   journeyLive,
   memberModalHtml,
@@ -31,7 +33,7 @@ import {
   recruitHtml,
   recruitResultHtml,
 } from "./views.ts";
-import type { Tab, UiState } from "./views.ts";
+import type { HelpTopic, Tab, UiState } from "./views.ts";
 import { installDebug, logEvent, openLogSheet } from "../debug/debug.ts";
 import { debugPanelHtml } from "../debug/panel.ts";
 
@@ -435,9 +437,17 @@ function start(): void {
       case "filter":
         ui.hero = { ...ui.hero, filter: (el.dataset["v"] ?? "all") as UiState["hero"]["filter"] };
         break;
-      case "sort-toggle":
-        ui.hero = { ...ui.hero, sort: ui.hero.sort === "level" ? "rarity" : "level" };
+      case "sort":
+        ui.hero = { ...ui.hero, sort: el.dataset["v"] === "level" ? "level" : "rarity" };
         break;
+      case "list-options":
+        openModal(() => listOptionsHtml(session.game(), content, ui.hero));
+        break;
+      case "help": {
+        const topic = (el.dataset["topic"] ?? "members") as HelpTopic;
+        openModal(() => helpHtml(session.game(), content, topic));
+        break;
+      }
       case "level-open": {
         const own = session.game().members[id];
         if (!own) break;
