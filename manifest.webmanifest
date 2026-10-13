@@ -1,0 +1,13 @@
+{
+  "name": "旅の劇団（試作）",
+  "short_name": "旅の劇団",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ecebe7",
+  "theme_color": "#ecebe7",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
